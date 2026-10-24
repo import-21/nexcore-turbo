@@ -1,54 +1,64 @@
 # nexcore-turbo
 
-**Make small servers serve a lot more.** Tested, conservative defaults that put
-an nginx page cache in front of WordPress / PHP, tune OPcache and PHP-FPM, and
-let gunicorn workers share one warmed-up copy of a Django or Flask app.
+**小さなサーバーで、もっと多くの訪問者をさばくための設定集です。**
+WordPress / PHP の前に nginx のページキャッシュを置き、OPcache と PHP-FPM を調整し、
+Django / Flask のアプリを gunicorn の全ワーカーで共有して動かします。
 
-小さなサーバーで、もっと多くをさばくための設定集です。WordPress / PHP の前に
-nginx のページキャッシュを置き、OPcache と PHP-FPM を調整し、Django / Flask を
-gunicorn の全ワーカーで共有して動かします。日本語の説明は [下](#日本語) にあります。
+新しい仕組みを発明したものではありません。nginx のページキャッシュ、OPcache、
+gunicorn の preload といった定番の手法を**安全側の初期値で組み合わせ、壊れないことを
+自動テストで確かめた**ものです。
 
-| Part | What it does | Measured on 2 CPU / 2 GB |
+| 部品 | 内容 | 2コア・2GB での実測 |
 |---|---|---|
-| `nginx/` | Page cache for anonymous visitors (logged-in users, carts, POST, admin, API, query strings and anything that sets a cookie are never cached) | WordPress **34 → ~29,000 req/s** (cached pages) |
-| `php/` | OPcache for PHP 7.2+ (still picks up file edits within 2 s) + optional JIT + PHP-FPM pool | WordPress container **534 MB → 130 MB** |
-| `python/` | gunicorn config: preload, render your pages once before forking, close DB sockets, freeze the GC | private memory per worker **-59 to -81 %** |
+| `nginx/` | ログインしていない訪問者向けのページキャッシュ（ログイン中・カート・POST・管理画面・API・クエリ付きURL・Cookie を発行するページはキャッシュしない） | WordPress **毎秒34件 → 約29,000件**（キャッシュ済みページ） |
+| `php/` | PHP 7.2 以降向けの OPcache（ファイルの編集は2秒以内に反映）、JIT（任意）、PHP-FPM のプール設定 | WordPress コンテナのメモリ **534MB → 130MB** |
+| `python/` | gunicorn 設定：preload、ワーカーを分ける前にページを1回表示、DB 接続を閉じる、GC を固定 | ワーカー1つあたりのメモリ **59〜81% 減** |
 
-The numbers come from `bench/run.sh` and the test suites below; see
-[Benchmarks](#benchmarks) for the exact conditions and what they do **not** mean.
+数字は `bench/run.sh` と下記のテストで測ったものです。測定条件と、数字が
+**意味しないこと**は [ベンチマーク](#ベンチマーク) を見てください。
 
-## Quick start
+## 使い方
 
-### WordPress with Docker
+### Docker で WordPress を動かす
 
 ```sh
 cd docker/wordpress
-cp .env.example .env        # set DB_PASSWORD
+cp .env.example .env        # DB_PASSWORD を設定
 docker compose up -d        # http://localhost:8080
-# optional JIT: docker compose -f compose.yml -f compose.jit.yml up -d
+# JIT を使う場合: docker compose -f compose.yml -f compose.jit.yml up -d
 ```
 
-`curl -I http://localhost:8080/` shows `X-Turbo-Cache: MISS`, then `HIT`.
+`curl -I http://localhost:8080/` を2回実行すると、`X-Turbo-Cache` が `MISS` → `HIT` になります。
 
-### Existing server (nginx + PHP-FPM from your distribution)
+### 今あるサーバー（ディストリビューションの nginx + PHP-FPM）に入れる
 
 ```sh
-sudo sh native/install.sh --dry-run   # see what would be written
-sudo sh native/install.sh             # runs nginx -t, rolls back on failure
+sudo sh native/install.sh --dry-run   # 何が書き込まれるか確認（何も変更しない）
+sudo sh native/install.sh             # nginx -t に失敗したら自動で元に戻す
 ```
 
-Then add to your site's `server {}` block and reload:
+そのあと、サイトの `server {}` に次の2行を足して nginx を再読み込みします。
 
 ```nginx
-set $turbo_php_upstream unix:/run/php/php8.3-fpm.sock;   # your PHP-FPM socket
+set $turbo_php_upstream unix:/run/php/php8.3-fpm.sock;   # PHP-FPM のソケット
 include /etc/nginx/turbo/turbo-wordpress.conf;
 ```
 
-Already have your own PHP location? Include only the cache part inside it:
+PHP 用の `location` を自分で書いている場合は、その中にキャッシュ部分だけを入れることもできます。
 `include /etc/nginx/turbo/turbo-php-cache.conf;`
-Remove everything with `sudo sh native/install.sh --uninstall`.
 
-### Django / Flask with gunicorn
+元に戻すときは `sudo sh native/install.sh --uninstall` です。
+
+| オプション | 内容 |
+|---|---|
+| `--dry-run` | 書き込む予定のファイルを表示するだけ |
+| `--ttl 60s` | キャッシュの有効期限 |
+| `--jit` | PHP の JIT も有効にする |
+| `--no-php` | nginx の設定だけ入れる |
+| `--reload` | 入れたあと nginx と PHP-FPM を再読み込みする |
+| `--uninstall` | 入れたファイルをすべて削除する |
+
+### Django / Flask（gunicorn）
 
 ```sh
 pip install ./python
@@ -56,73 +66,70 @@ TURBO_WARMUP_PATHS="/,/about/,/blog/" TURBO_WARMUP_HOST=example.com \
   gunicorn -c python:nexcore_turbo.gunicorn_conf myproject.wsgi
 ```
 
-| Variable | Default | |
+起動時に指定したページを1回表示してからワーカーに分けるので、テンプレートや
+読み込んだモジュールを全ワーカーで共有できます。
+
+| 環境変数 | 初期値 | 説明 |
 |---|---|---|
-| `TURBO_BIND` | `0.0.0.0:8000` | |
-| `TURBO_WORKERS` | CPUs available to the container | respects `--cpus` and cpusets |
-| `TURBO_WARMUP_PATHS` / `TURBO_WARMUP_FILE` | none | GET-only pages to render before forking |
-| `TURBO_WARMUP_HOST` | `localhost` | must be in `ALLOWED_HOSTS` |
-| `TURBO_AFTER_WARMUP` | none | `module:function` to close your own pools |
-| `TURBO_DISABLE` | | `1` = plain gunicorn behaviour |
+| `TURBO_BIND` | `0.0.0.0:8000` | 待ち受けるアドレス |
+| `TURBO_WORKERS` | コンテナで使える CPU 数 | `--cpus` や cpuset の制限に従う |
+| `TURBO_WARMUP_PATHS` / `TURBO_WARMUP_FILE` | なし | ワーカーを分ける前に表示するページ（GET のみ） |
+| `TURBO_WARMUP_HOST` | `localhost` | `ALLOWED_HOSTS` に含まれるホスト名にする |
+| `TURBO_AFTER_WARMUP` | なし | 独自の接続を閉じる関数（`モジュール:関数`） |
+| `TURBO_DISABLE` | | `1` で通常の gunicorn と同じ動作に戻す |
 
-Django database connections and caches are closed after the warm-up so that no
-socket is shared between workers. If you open other connections at import time
-(SQLAlchemy engines, Redis clients, ...), close them in `TURBO_AFTER_WARMUP`.
+Django の DB 接続とキャッシュは、ウォームアップの後に自動で閉じます（ワーカー間で
+接続を共有しないため）。読み込み時に独自の接続（SQLAlchemy、Redis など）を作っている
+場合は、`TURBO_AFTER_WARMUP` で閉じてください。
 
-## What gets cached, and what never does
+## キャッシュするもの・しないもの
 
-Cached for `TURBO_CACHE_TTL` (default 60 s): `GET`/`HEAD` without a query string,
-from visitors without a login/comment/cart/session cookie, whose response is a
-200/301/302 (404 for 10 s) and does **not** set a cookie or say `private`,
-`no-store` or `no-cache`.
+**キャッシュする**（有効期限 `TURBO_CACHE_TTL`、初期値60秒）：クエリ文字列のない
+`GET`/`HEAD` で、ログイン・コメント・カート・セッションの Cookie を持たない訪問者への、
+200/301/302 の応答（404 は10秒）。ただし Cookie を発行する応答と、`private`・`no-store`・
+`no-cache` を返す応答は保存しません。
 
-Never cached: `POST` and other methods, `wp-admin`, `wp-login.php`, `wp-json`,
-`xmlrpc.php`, `wp-cron.php`, cart/checkout/my-account, feeds, sitemaps, requests
-with `Authorization`, and cookies `wordpress_logged_in_*`, `wp-postpass_*`,
-`comment_author_*`, WooCommerce/EDD cart cookies and `PHPSESSID`.
+**キャッシュしない**：
+- `POST` などの GET/HEAD 以外のリクエスト
+- `wp-admin`、`wp-login.php`、`wp-json`、`xmlrpc.php`、`wp-cron.php`
+- カート・購入手続き・マイアカウント、フィード、サイトマップ
+- `Authorization` ヘッダー付きのリクエスト
+- Cookie `wordpress_logged_in_*`、`wp-postpass_*`、`comment_author_*`、WooCommerce/EDD のカート、`PHPSESSID` を持つ訪問者
 
-Trade-offs to know:
-- A published change can take up to the TTL to appear for anonymous visitors
-  (the first visitor after expiry may still get the old copy while nginx
-  refreshes it in the background).
-- The cache key includes scheme, method, host and full URI, so sites never
-  share entries.
-- Pages that personalise content for anonymous visitors **without** a cookie
-  (e.g. by IP or `User-Agent`) must send `Cache-Control: private`.
+**知っておくこと**：
+- 記事を更新してから、ログインしていない訪問者に反映されるまで最大で TTL かかります（期限切れ直後の1人目には、裏で更新している間だけ古いページが返ることがあります）。
+- キャッシュのキーにはスキーム・メソッド・ホスト名・URL 全体を含むので、サイト同士で混ざりません。
+- Cookie を使わずに訪問者ごとに内容を変えるページ（IP アドレスや `User-Agent` で出し分けるなど）は、`Cache-Control: private` を返してください。
+- アップロードフォルダの PHP は実行されません。ドットファイル（`.env`、`.git` など）は配信しません。
 
-## Tested environments
+## テスト済みの環境
 
-Every change is checked by three suites (all in `tests/`):
+変更のたびに、`tests/` の3種類のテストで確認しています。
 
-- `tests/wp/` – full Docker stack, real WordPress installed with wp-cli:
-  cache hit/miss/bypass rules, login, comments, post updates, plugin install,
-  OPcache revalidation, upload/PHP execution rules, restart.
-- `tests/native/` – `native/install.sh` on stock distribution packages, with
-  dry-run, rollback on a broken nginx config, and uninstall.
-- `tests/python/` – real gunicorn: warm-up, per-worker DB connections
-  (PostgreSQL), 480 concurrent requests, SIGHUP reload, CPU-limit detection,
-  memory saving vs. plain gunicorn.
+- `tests/wp/`：Docker 構成に wp-cli で本物の WordPress を入れ、キャッシュの HIT/MISS/BYPASS、ログイン、コメント、記事更新、プラグイン導入、OPcache の再読み込み、アップロードと PHP 実行の制限、再起動を確認
+- `tests/native/`：各ディストリビューション標準のパッケージに `native/install.sh` を入れ、dry-run、壊れた nginx 設定での自動ロールバック、アンインストールまで確認
+- `tests/python/`：本物の gunicorn で、ウォームアップ、ワーカーごとの DB 接続（PostgreSQL）、480件の同時リクエスト、SIGHUP での再読み込み、CPU 制限の検出、通常の gunicorn とのメモリ比較を確認
 
-Last full run: 2026-10-25. Every row below passed every check.
+最終実行：2026-10-25。下の表のすべての環境で、全項目が通過しています。
 
-**Docker stack (`tests/wp`, 55-56 checks each)**
+**Docker 構成（`tests/wp`、各55〜56項目）**
 
-| WordPress image | nginx | Database | |
+| WordPress イメージ | nginx | データベース | 備考 |
 |---|---|---|---|
-| php7.4-fpm-alpine (WP 6.1) | 1.24-alpine | MariaDB 10.6 | |
+| php7.4-fpm-alpine（WP 6.1） | 1.24-alpine | MariaDB 10.6 | |
 | php8.1-fpm-alpine | 1.24-alpine | MariaDB 10.11 | |
-| 6.4-php8.1-fpm-alpine | 1.25-alpine | MySQL 8.0 | older WordPress |
-| php8.2-fpm (Debian) | 1.26 | MySQL 8.0 | |
+| 6.4-php8.1-fpm-alpine | 1.25-alpine | MySQL 8.0 | 古い WordPress |
+| php8.2-fpm（Debian） | 1.26 | MySQL 8.0 | |
 | php8.3-fpm-alpine | 1.26-alpine | MariaDB 11.4 | |
-| php8.3-fpm (Debian) | 1.27 | MariaDB 11.4 | |
+| php8.3-fpm（Debian） | 1.27 | MariaDB 11.4 | |
 | php8.3-fpm-alpine | mainline-alpine | MariaDB LTS | JIT |
 | php8.4-fpm-alpine | 1.27-alpine | MySQL 8.4 | |
 | php8.4-fpm-alpine | 1.26-alpine | MariaDB 11.4 | JIT |
-| php8.3-fpm-alpine on **arm64** (QEMU) | 1.26-alpine | MariaDB 11.4 (x86_64) | nginx + PHP on arm64 |
+| php8.3-fpm-alpine（**arm64**、QEMU） | 1.26-alpine | MariaDB 11.4（x86_64） | nginx と PHP を arm64 で実行 |
 
-**Existing servers (`tests/native`, 28 checks each)** – stock packages only
+**既存サーバー（`tests/native`、各28項目）**：標準パッケージのみ使用
 
-| Distribution | nginx | PHP |
+| ディストリビューション | nginx | PHP |
 |---|---|---|
 | Ubuntu 22.04 | 1.18.0 | 8.1 |
 | Ubuntu 24.04 | 1.24.0 | 8.3 |
@@ -135,117 +142,52 @@ Last full run: 2026-10-25. Every row below passed every check.
 | Amazon Linux 2023 | 1.30.5 | 8.5 |
 | Alpine 3.20 | 1.26.3 | 8.3 |
 | Alpine 3.22 | 1.28.3 | 8.4 |
-| Debian 12 on **arm64** (QEMU) | 1.22.1 | 8.2 |
+| Debian 12（**arm64**、QEMU） | 1.22.1 | 8.2 |
 
-**Python (`tests/python`, 13-15 checks each)**
+**Python（`tests/python`、各13〜15項目）**
 
-| Python | Framework | gunicorn | Database | Memory per worker |
+| Python | フレームワーク | gunicorn | データベース | ワーカーのメモリ |
 |---|---|---|---|---|
-| 3.8 | Django 4.2 | 20.1 | SQLite | -66 % |
-| 3.9 | Django 4.2 | 21.2 | PostgreSQL 16 | -66 % |
-| 3.10 | Django 5.2 | 22.0 | PostgreSQL 16 | -59 % |
-| 3.11 (`--cpus 1.5`) | Django 5.2 | 23.0 | SQLite | -69 % |
-| 3.12 Alpine (musl) | Django 6.1 | 26.2 | PostgreSQL 16 | -67 % |
-| 3.13 | Django 6.1 | 26.2 | PostgreSQL 16 | -66 % |
-| 3.14 | Django 6.1 | 26.2 | SQLite | -66 to -78 % |
-| 3.8 | Flask 2.2 | 20.1 | – | -62 % |
-| 3.12 Alpine (musl) | Flask 3 | 26.2 | – | -71 % |
-| 3.14 (`--cpus 0.5`) | Flask 3 | 26.2 | – | -68 % |
-| 3.12 on **arm64** (QEMU) | Django 6.1 | 26.2 | SQLite | -66 % |
+| 3.8 | Django 4.2 | 20.1 | SQLite | 66% 減 |
+| 3.9 | Django 4.2 | 21.2 | PostgreSQL 16 | 66% 減 |
+| 3.10 | Django 5.2 | 22.0 | PostgreSQL 16 | 59% 減 |
+| 3.11（`--cpus 1.5`） | Django 5.2 | 23.0 | SQLite | 69% 減 |
+| 3.12 Alpine（musl） | Django 6.1 | 26.2 | PostgreSQL 16 | 67% 減 |
+| 3.13 | Django 6.1 | 26.2 | PostgreSQL 16 | 66% 減 |
+| 3.14 | Django 6.1 | 26.2 | SQLite | 66〜78% 減 |
+| 3.8 | Flask 2.2 | 20.1 | – | 62% 減 |
+| 3.12 Alpine（musl） | Flask 3 | 26.2 | – | 71% 減 |
+| 3.14（`--cpus 0.5`） | Flask 3 | 26.2 | – | 68% 減 |
+| 3.12（**arm64**、QEMU） | Django 6.1 | 26.2 | SQLite | 66% 減 |
 
-Hosts: Linux (cgroup v2) with Docker (upstream and distribution packages).
-arm64 was tested under QEMU emulation, not
-on real ARM hardware. Not covered yet: cgroup v1 hosts, Podman,
-macOS/Windows Docker Desktop, Apache in front of PHP, LiteSpeed.
+テストしたホスト：Linux（cgroup v2）+ Docker（公式版とディストリビューション版）。
+arm64 は QEMU のエミュレーションでの
+確認で、ARM の実機では試していません。
 
-## Benchmarks
+まだ試していない環境：cgroup v1 のホスト、Podman、macOS/Windows の Docker Desktop、
+Apache を PHP の前に置く構成、LiteSpeed。
 
-`bench/run.sh` boxes the official `wordpress:php8.3-apache` image and the turbo
-stack into the same 2 CPUs / 2 GB, generates the same posts on the default
-theme, and runs k6 with 50 virtual users for 30 s, five times.
+## ベンチマーク
 
-Run on 2026-10-24, stack pinned to 2 cores of a many-core x86_64 host, load
-generator on separate cores ([raw output](docs/bench-2026-10-24.txt)):
+`bench/run.sh` は、公式の `wordpress:php8.3-apache` イメージと nexcore-turbo を同じ
+2コア・2GB に閉じ込め、標準テーマで同じ記事を作り、k6 で50人の同時アクセスを30秒×5回かけます。
 
-| | Official image | nexcore-turbo |
+2026-10-24 実施。多コアの x86_64 サーバーで2コアに固定し、負荷をかける側は別のコアで
+動かしました（[生の出力](docs/bench-2026-10-24.txt)）。
+
+| | 公式イメージ | nexcore-turbo |
 |---|---|---|
-| Requests per second (5 rounds) | 33.5 – 34.4 | 28,510 – 30,256 |
-| p95 response time | 1.55 – 1.66 s | 3.0 – 3.5 ms |
-| Memory (WordPress / nginx / DB) | 534 MB / – / 113 MB | 130 MB / 14 MB / 93 MB |
-| Errors | 0 | 0 |
+| 1秒あたりの処理件数（5回） | 33.5〜34.4 | 28,510〜30,256 |
+| 応答時間（95%値） | 1.55〜1.66秒 | 3.0〜3.5ミリ秒 |
+| メモリ（WordPress / nginx / DB） | 534MB / – / 113MB | 130MB / 14MB / 93MB |
+| エラー | 0 | 0 |
 
-Worst round against best round: **28,510 / 34.41 = 828x**.
+最も不利な組み合わせ（nexcore-turbo の最低値 ÷ 公式イメージの最高値）：**28,510 ÷ 34.41 = 828倍**
 
-These numbers describe cached page views for anonymous visitors on that box.
-They do not apply to logged-in users, form posts or carts, and real-world
-speed depends on the site and the network.
+この数字は、ログインしていない訪問者がキャッシュ済みのページを見る場合のものです。
+ログイン中の操作、フォーム送信、カートには当てはまりません。実際の速度はサイトの内容や
+通信環境によって変わります。
 
-## License
+## ライセンス
 
 MIT
-
----
-
-## 日本語
-
-### これは何か
-
-小さなサーバー（2コア・2GB程度）でも、WordPress や Django を多くの訪問者に
-速く返せるようにする、テスト済みの設定一式です。新しい仕組みを発明したもの
-ではなく、定番の手法（nginx のページキャッシュ、OPcache、gunicorn の preload）を
-**安全側の初期値で組み合わせ、壊れないことを自動テストで確かめた**ものです。
-
-### 安全のために決めていること
-
-- ログイン中・コメント投稿者・カートを持つ人・セッションを持つ人には、キャッシュを使いません。
-- 管理画面、ログイン、API、フォーム送信、検索などクエリ付きのURLは、常にその場で作ります。
-- Cookie を発行するページ、`private`・`no-store`・`no-cache` を返すページは保存しません。
-- サイトが違えば（ホスト名が違えば）キャッシュは混ざりません。
-- プラグインの更新やファイルの編集は、PHP の再起動なしで 2 秒以内に反映されます。
-- アップロードフォルダの PHP は実行されません。
-- 既存サーバー用のインストーラーは `nginx -t` に失敗したら元に戻します。サイトの設定ファイルは書き換えません。
-
-### 使い方
-
-**Docker で WordPress を動かす**
-
-```sh
-cd docker/wordpress
-cp .env.example .env        # DB_PASSWORD を設定
-docker compose up -d        # http://localhost:8080
-```
-
-**今あるサーバー（nginx + PHP-FPM）に入れる**
-
-```sh
-sudo sh native/install.sh --dry-run   # 何が書き込まれるか確認
-sudo sh native/install.sh             # nginx -t に失敗したら自動で元に戻す
-```
-
-そのあと、サイトの `server {}` に次の2行を足して nginx を再読み込みします。
-
-```nginx
-set $turbo_php_upstream unix:/run/php/php8.3-fpm.sock;   # PHP-FPM のソケット
-include /etc/nginx/turbo/turbo-wordpress.conf;
-```
-
-元に戻すときは `sudo sh native/install.sh --uninstall` です。
-
-**Django / Flask（gunicorn）**
-
-```sh
-pip install ./python
-TURBO_WARMUP_PATHS="/,/about/" TURBO_WARMUP_HOST=example.com \
-  gunicorn -c python:nexcore_turbo.gunicorn_conf myproject.wsgi
-```
-
-起動時に指定したページを1回表示してから全ワーカーに分けるので、テンプレートや
-読み込んだモジュールを全ワーカーで共有できます。Django の DB 接続は分ける前に
-自動で閉じます。独自に作った接続（SQLAlchemy、Redis など）は
-`TURBO_AFTER_WARMUP` で閉じてください。
-
-### 注意
-
-- 記事を更新してから、ログインしていない訪問者に反映されるまで、最大で TTL（初期値60秒）かかります。
-- Cookie を使わずに訪問者ごとに内容を変えるページ（IPアドレスで出し分けるなど）は、`Cache-Control: private` を返してください。
-- 速度の数字は、ログインしていない訪問者がキャッシュ済みのページを見る場合のものです。
