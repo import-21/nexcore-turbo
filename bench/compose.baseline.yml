@@ -1,0 +1,26 @@
+# Baseline: the official WordPress image exactly as shipped (Apache + mod_php),
+# boxed into the same CPUs / memory as the turbo stack.
+name: turbo-bench-baseline
+services:
+  wordpress:
+    image: wordpress:${BASELINE_TAG:-php8.3-apache}
+    cpuset: "${BENCH_CPUS:-0,1}"
+    mem_limit: 1536m
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: bench
+    volumes: [wp-files:/var/www/html]
+    depends_on: [db]
+  db:
+    image: mariadb:11.4
+    cpuset: "${BENCH_CPUS:-0,1}"
+    mem_limit: 512m
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: bench
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+volumes:
+  wp-files:

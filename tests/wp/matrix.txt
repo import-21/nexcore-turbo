@@ -1,0 +1,10 @@
+# WORDPRESS_TAG               NGINX_VERSION   DB_IMAGE        [jit|-] [platform]
+php7.4-fpm-alpine             1.24-alpine     mariadb:10.6
+php8.1-fpm-alpine             1.24-alpine     mariadb:10.11
+6.4-php8.1-fpm-alpine         1.25-alpine     mysql:8.0
+php8.2-fpm                    1.26            mysql:8.0
+php8.3-fpm-alpine             1.26-alpine     mariadb:11.4
+php8.3-fpm                    1.27            mariadb:11.4
+php8.4-fpm-alpine             1.27-alpine     mysql:8.4
+php8.4-fpm-alpine             1.26-alpine     mariadb:11.4    jit
+php8.3-fpm-alpine             mainline-alpine mariadb:lts     jit

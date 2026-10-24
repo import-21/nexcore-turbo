@@ -1,0 +1,6 @@
+# Optional: enable the PHP JIT (PHP 8.0+).
+#   docker compose -f compose.yml -f compose.jit.yml up -d
+services:
+  wordpress:
+    volumes:
+      - ../../php/turbo-jit.ini:/usr/local/etc/php/conf.d/zz-turbo-jit.ini:ro

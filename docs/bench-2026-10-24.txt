@@ -1,0 +1,20 @@
+nexcore-turbo benchmark 2026-10-24T15:27:23+00:00
+host: Linux x86_64; stack pinned to 2 CPUs, load generator on separate CPUs
+VUs=50, 30s x 5 rounds, 50 posts + home, anonymous GET
+-- baseline (official image)
+baseline   round 1  req/s=33.461104  p95=1.61s  ok=100.00%
+baseline   round 2  req/s=34.072448  p95=1.59s  ok=100.00%
+baseline   round 3  req/s=34.414064  p95=1.61s  ok=100.00%
+baseline   round 4  req/s=34.241819  p95=1.66s  ok=100.00%
+baseline   round 5  req/s=34.120872  p95=1.55s  ok=100.00%
+turbo-bench-baseline-wordpress-1 534.2MiB / 1.5GiB
+turbo-bench-baseline-db-1 113.1MiB / 512MiB
+-- nexcore-turbo
+turbo      round 1  req/s=28786.30919  p95=3.32ms  ok=100.00%
+turbo      round 2  req/s=28509.71769  p95=3.38ms  ok=100.00%
+turbo      round 3  req/s=30211.861409  p95=3.04ms  ok=100.00%
+turbo      round 4  req/s=28789.733979  p95=3.47ms  ok=100.00%
+turbo      round 5  req/s=30255.676196  p95=3.04ms  ok=100.00%
+turbo-bench-nginx-1 14.12MiB / 256MiB
+turbo-bench-wordpress-1 129.6MiB / 1.25GiB
+turbo-bench-db-1 92.56MiB / 512MiB

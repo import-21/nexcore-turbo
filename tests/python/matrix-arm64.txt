@@ -1,0 +1,2 @@
+# IMAGE               KIND    GUNICORN            FRAMEWORK            PG  CPUS/EXPECT  PLATFORM
+python:3.12-slim      django  gunicorn            django               -   -            linux/arm64

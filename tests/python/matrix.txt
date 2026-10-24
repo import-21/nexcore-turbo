@@ -1,0 +1,11 @@
+# IMAGE               KIND    GUNICORN            FRAMEWORK            PG  CPUS/EXPECT  PLATFORM
+python:3.8-slim       django  gunicorn==20.1.*    django==4.2.*        -   -            -
+python:3.9-slim       django  gunicorn==21.2.*    django==4.2.*        1   -            -
+python:3.10-slim      django  gunicorn==22.0.*    django==5.2.*        1   -            -
+python:3.11-slim      django  gunicorn==23.0.*    django==5.2.*        -   1.5/2        -
+python:3.12-alpine    django  gunicorn            django               1   -            -
+python:3.13-slim      django  gunicorn            django               1   -            -
+python:3.14-slim      django  gunicorn            django               -   -            -
+python:3.8-slim       flask   gunicorn==20.1.*    flask==2.2.*         -   -            -
+python:3.12-alpine    flask   gunicorn            flask                -   -            -
+python:3.14-slim      flask   gunicorn            flask                -   0.5/1        -

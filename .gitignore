@@ -1,0 +1,7 @@
+.test-logs/
+bench/results-*.txt
+__pycache__/
+*.egg-info/
+build/
+dist/
+docker/wordpress/.env

@@ -1,0 +1,2 @@
+# arm64 under QEMU emulation (slow; functional only)
+php8.3-fpm-alpine             1.26-alpine     mariadb:11.4    -       linux/arm64

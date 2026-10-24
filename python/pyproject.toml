@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexcore-turbo"
+version = "0.1.0"
+description = "Pre-fork warm-up for gunicorn: workers share one warmed copy of your Django/Flask app"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = []
+classifiers = [
+    "Framework :: Django",
+    "Framework :: Flask",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+]
+
+[project.optional-dependencies]
+gunicorn = ["gunicorn>=20.1"]
+
+[tool.setuptools]
+packages = ["nexcore_turbo"]

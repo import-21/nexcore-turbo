@@ -1,0 +1,3 @@
+{% load humanize %}<!doctype html><html><body><h1>{{ title }}</h1>
+<ul>{% for i in items %}<li class="{% cycle 'a' 'b' %}">{{ i|intcomma }} {{ i|add:"1"|stringformat:"05d" }}</li>{% endfor %}</ul>
+</body></html>

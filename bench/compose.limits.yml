@@ -1,0 +1,12 @@
+# Benchmark override for docker/wordpress/compose.yml: same CPUs, 2 GB in total.
+services:
+  nginx:
+    cpuset: "${BENCH_CPUS:-0,1}"
+    mem_limit: 256m
+    ports: !reset []
+  wordpress:
+    cpuset: "${BENCH_CPUS:-0,1}"
+    mem_limit: 1280m
+  db:
+    cpuset: "${BENCH_CPUS:-0,1}"
+    mem_limit: 512m
