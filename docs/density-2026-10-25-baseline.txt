@@ -1,0 +1,9 @@
+nexcore-turbo density benchmark 2026-10-24T19:49:49+00:00  mode=baseline
+host: Linux x86_64, stack pinned to 2 CPUs (load generator on separate CPUs), budget 2048 MiB, p95 <= 500 ms
+load: 0.5 visits/s per site, 10% uncached searches, 60s warm-up then 60s measured per step, 10 posts per site
+sites  rate/s  p95(ms)  p95-uncached(ms)  errors  mem(MiB)  cpu(%)  idle-mem(MiB)  result  notes
+   10       5      164               148       0      1406      75            776  PASS  
+   12       6      160               150       0      1721      88           1569  PASS  
+   13       7      162               144       0      1883     105           1795  PASS  
+   14       7      160               147       0      1982      89           1875  PASS  
+   15       8      157               147       0      2108      93           2030  FAIL(memory)  

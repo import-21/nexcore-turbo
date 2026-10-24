@@ -1,0 +1,68 @@
+# nexcore-turbo multi-site: many WordPress sites on one nginx, one PHP-FPM
+# master (a small on-demand pool per site) and one database.
+#   cp .env.example .env && docker compose up -d --build
+#   sh add-site.sh shop1 --domain example.test   ->  http://shop1.example.test
+name: ${COMPOSE_PROJECT_NAME:-turbo-multi}
+
+services:
+  nginx:
+    image: nginx:${NGINX_VERSION:-1.26-alpine}
+    depends_on: [php]
+    ports: ["${HTTP_PORT:-8080}:80"]
+    environment:
+      TURBO_CACHE_TTL: ${TURBO_CACHE_TTL:-1h}
+      TURBO_NGINX_WORKERS: ${TURBO_NGINX_WORKERS:-}
+    volumes:
+      - ../../nginx/nginx.conf:/opt/turbo/nginx.conf:ro
+      - ../../nginx/turbo-http.conf:/opt/turbo/turbo-http.conf:ro
+      - ../../nginx/turbo-php-cache.conf:/opt/turbo/turbo-php-cache.conf:ro
+      - ../../nginx/turbo-wordpress.conf:/opt/turbo/turbo-wordpress.conf:ro
+      - ../wordpress/40-turbo-tune.sh:/docker-entrypoint.d/40-turbo-tune.sh:ro
+      - ./site.conf:/etc/nginx/conf.d/default.conf:ro
+      - sites:/srv/sites:ro
+      - core:/srv/core:ro
+      - refresh:/etc/nginx/turbo/refresh:ro
+      - php-run:/run/php
+    tmpfs:
+      - /var/cache/nginx/turbo:size=${TURBO_CACHE_SIZE:-600m}
+    restart: unless-stopped
+
+  php:
+    build:
+      context: ../..
+      dockerfile: docker/multisite/Dockerfile.php
+      args:
+        WORDPRESS_TAG: ${WORDPRESS_TAG:-php8.3-fpm-alpine}
+    image: nexcore-turbo-php:${WORDPRESS_TAG:-php8.3-fpm-alpine}
+    # Publish this image's WordPress core to the shared volume, then start FPM.
+    command: ["sh", "-c", "cp /opt/turbo/php-fpm.d/*.conf /usr/local/etc/php-fpm.d/ && find /srv/core -mindepth 1 -delete && cp -a /opt/turbo-core/. /srv/core/ && exec php-fpm -F"]
+    environment:
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+    volumes:
+      - ./php-fpm.d:/opt/turbo/php-fpm.d:ro
+      - ./pool.conf.template:/opt/turbo/pool.conf.template:ro
+      - ../../php/turbo-opcache.ini:/usr/local/etc/php/conf.d/zz-turbo-opcache.ini:ro
+      - ./opcache-multisite.ini:/usr/local/etc/php/conf.d/zzz-turbo-multisite.ini:ro
+      - sites:/srv/sites
+      - core:/srv/core
+      - refresh:/srv/refresh
+      - php-run:/run/php
+      - pools:/usr/local/etc/php-fpm.d
+    restart: unless-stopped
+
+  db:
+    image: ${DB_IMAGE:-mariadb:11.4}
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/mysql
+      - ./mariadb-small.cnf:/etc/mysql/conf.d/zz-turbo.cnf:ro
+    restart: unless-stopped
+
+volumes:
+  sites:
+  core:
+  refresh:
+  php-run:
+  pools:
+  db-data:

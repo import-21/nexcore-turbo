@@ -1,0 +1,9 @@
+# Density benchmark override for docker/multisite/compose.yml: everything on BENCH_CPUS, no host port.
+services:
+  nginx:
+    cpuset: "${BENCH_CPUS:-0,1}"
+    ports: !reset []
+  php:
+    cpuset: "${BENCH_CPUS:-0,1}"
+  db:
+    cpuset: "${BENCH_CPUS:-0,1}"

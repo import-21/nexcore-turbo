@@ -23,7 +23,7 @@ TTL_SECONDS=4
 proj="turbotest$(echo "$WORDPRESS_TAG$NGINX_VERSION$DB_IMAGE$HTTP_PORT" | cksum | cut -c1-8)"
 base="http://localhost:$HTTP_PORT"
 export COMPOSE_PROJECT_NAME="$proj" WORDPRESS_TAG NGINX_VERSION DB_IMAGE HTTP_PORT
-export DB_PASSWORD="test-$(date +%s)" TURBO_CACHE_TTL="${TTL_SECONDS}s"
+export DB_PASSWORD="test-$(date +%s)" TURBO_CACHE_TTL="${TTL_SECONDS}s" TURBO_REFRESH_SECRET="refresh$(date +%s)secret"
 # Only nginx and PHP run on $PLATFORM: they are what is under test, and the
 # MariaDB entrypoint times out under QEMU emulation.
 plat_override=""
@@ -49,7 +49,8 @@ wp() {
     docker run --rm ${PLATFORM:+--platform "$PLATFORM"} --network "${proj}_default" --volumes-from "$wp_ctr" \
         --user "$wp_uid:$wp_uid" -e HOME=/tmp \
         -e WORDPRESS_DB_HOST=db -e WORDPRESS_DB_NAME=wordpress -e WORDPRESS_DB_USER=wordpress \
-        -e WORDPRESS_DB_PASSWORD="$DB_PASSWORD" "$wpcli_image" wp "$@"
+        -e WORDPRESS_DB_PASSWORD="$DB_PASSWORD" -e TURBO_REFRESH_SECRET -e TURBO_REFRESH_URL=http://nginx \
+        "$wpcli_image" wp "$@"
 }
 
 # Wait for the WordPress files and the database. (Not "wp db check": newer
@@ -156,14 +157,20 @@ sleep $((TTL_SECONDS + 1))
 expect_match "commenter sees own comment immediately" "turbo-comment-$$" "$(curl -s -b "$cjar" "$base/hello-turbo/")"
 rm -f "$cjar"
 
-echo "-- content updates appear after the TTL"
+echo "-- refresh on update (no waiting for the TTL)"
 cache_status "$base/hello-turbo/" >/dev/null
+expect_match "post page cached" '^(HIT|UPDATING|STALE)$' "$(cache_status "$base/hello-turbo/")"
 wp post update "$post_id" --post_content=updated-content >/dev/null
-expect_match "cached copy within TTL still old" 'original-content' "$(curl -s "$base/hello-turbo/")"
-sleep $((TTL_SECONDS + 2))
-curl -s -o /dev/null "$base/hello-turbo/"   # background refresh trigger
-sleep 1
-expect_match "new content after TTL" 'updated-content' "$(curl -s "$base/hello-turbo/")"
+expect_match "updated content served right after the update" 'updated-content' "$(curl -s "$base/hello-turbo/")"
+expect_match "and it is served from cache (refreshed, not bypassed)" '^(HIT|UPDATING|STALE)$' "$(cache_status "$base/hello-turbo/")"
+expect_match "home page refreshed too" 'hello-turbo' "$(curl -s "$base/")"
+expect_match "wrong refresh secret is just a visitor" '^(HIT|UPDATING|STALE)$' "$(cache_status -H 'X-Turbo-Refresh: guess' "$base/hello-turbo/")"
+expect_match "empty refresh header is just a visitor" '^(HIT|UPDATING|STALE)$' "$(cache_status -H 'X-Turbo-Refresh;' "$base/hello-turbo/")"
+expect_eq "correct secret re-renders" "BYPASS" "$(cache_status -H "X-Turbo-Refresh: $TURBO_REFRESH_SECRET" "$base/hello-turbo/")"
+
+echo "-- TTL is the safety net for changes the plugin does not see"
+s1=$(curl -s "$base/turbo-test/stamp"); sleep $((TTL_SECONDS + 2)); curl -s -o /dev/null "$base/turbo-test/stamp"; sleep 1
+[ "$(curl -s "$base/turbo-test/stamp")" != "$s1" ] && pass "entry renewed after the TTL" || fail "entry renewed after the TTL"
 
 echo "-- PHP file edits are picked up (OPcache revalidation)"
 v1=$(curl -s "$base/turbo-test/edit-me?x=1")

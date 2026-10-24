@@ -1,0 +1,8 @@
+nexcore-turbo density benchmark 2026-10-24T20:16:31+00:00  mode=turbo
+host: Linux x86_64, stack pinned to 2 CPUs (load generator on separate CPUs), budget 2048 MiB, p95 <= 500 ms
+load: 0.5 visits/s per site, 10% uncached searches, 60s warm-up then 60s measured per step, 10 posts per site
+sites  rate/s  p95(ms)  p95-uncached(ms)  errors  mem(MiB)  cpu(%)  idle-mem(MiB)  result  notes
+   75      38      134               200       0       438      19            376  PASS  fpm-cap-hits=0 pool-cap-hits=0 workers-now=9 non200=[] fpm=[] split: nginx-1=2.68%/74.98MiB php-1=33.62%/85.29MiB db-1=2.27%/249.3MiB 
+  100      50      133               210       0       507      46            454  PASS  fpm-cap-hits=0 pool-cap-hits=0 workers-now=12 non200=[] fpm=[] split: nginx-1=2.90%/96.53MiB php-1=57.65%/131.1MiB db-1=3.25%/304.9MiB 
+  150      75      140               314       0       735     113            607  PASS  fpm-cap-hits=0 pool-cap-hits=0 workers-now=16 non200=[] fpm=[] split: nginx-1=3.17%/139.1MiB php-1=78.41%/151.7MiB db-1=2.92%/415.6MiB 
+  200     100      165               424       3       893     154            735  FAIL(errors)  fpm-cap-hits=0 pool-cap-hits=0 workers-now=19 non200=[] fpm=[] split: nginx-1=3.06%/182.2MiB php-1=147.70%/218MiB db-1=4.89%/501.7MiB 

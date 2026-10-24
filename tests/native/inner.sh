@@ -81,6 +81,13 @@ cache_status -H 'Host: a.test' "$B/host" >/dev/null
 expect_match "host isolation" '^host=b\.test' "$(curl -s -H 'Host: b.test' "$B/host")"
 p1=$(curl -s "$B/ttl"); sleep 6; curl -s -o /dev/null "$B/ttl"; sleep 1; p2=$(curl -s "$B/ttl")
 [ "$p1" != "$p2" ] && pass "entry refreshed after --ttl 4s" || fail "entry refreshed after --ttl 4s" "$p1"
+secret=$(sed -n 's/^"~^\([A-Za-z0-9_-]*\)\$".*/\1/p' /etc/nginx/turbo/refresh/site.map)
+expect_match "installer generated a refresh secret" '^[0-9a-f]{32}$' "$secret"
+r1=$(curl -s "$B/refresh-me"); sleep 0.2
+expect_eq "wrong refresh secret ignored" "$r1" "$(curl -s -H 'X-Turbo-Refresh: nope' "$B/refresh-me")"
+curl -s -o /dev/null -H "X-Turbo-Refresh: $secret" "$B/refresh-me"
+r2=$(curl -s "$B/refresh-me")
+[ "$r1" != "$r2" ] && pass "refresh header replaces the cached page" || fail "refresh header replaces the cached page" "$r1"
 v1=$(curl -s "$B/edit-me?x=1"); echo "<?php return 'two';" > /srv/app/edit-me.inc.php; sleep 4
 expect_eq "PHP edits picked up without restart" "version=one version=two" "$v1 $(curl -s "$B/edit-me?x=2")"
 expect_eq "uploads PHP denied" "403" "$(http_code "$B/wp-content/uploads/evil.php")"

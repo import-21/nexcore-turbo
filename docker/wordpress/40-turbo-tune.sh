@@ -4,6 +4,7 @@
 #  - TURBO_CACHE_TTL: page cache lifetime (default 60s)
 #  - worker_processes follows the container CPU limit (cgroup v1/v2), not the host
 #    (override with TURBO_NGINX_WORKERS)
+#  - TURBO_REFRESH_SECRET: secret for refresh-on-update (see wordpress/)
 set -eu
 
 src=/opt/turbo
@@ -12,7 +13,17 @@ case "$ttl" in
     ""|*[!0-9smhd]*) echo "40-turbo-tune: invalid TURBO_CACHE_TTL '$ttl'" >&2; exit 1 ;;
 esac
 
-mkdir -p /etc/nginx/turbo /var/cache/nginx/turbo
+mkdir -p /etc/nginx/turbo/refresh /var/cache/nginx/turbo
+secret="${TURBO_REFRESH_SECRET:-}"
+if [ -n "$secret" ]; then
+    case "$secret" in *[!A-Za-z0-9_-]*) echo "40-turbo-tune: TURBO_REFRESH_SECRET may only contain A-Z a-z 0-9 _ -" >&2; exit 1 ;; esac
+    # 16-40 characters: longer keys do not fit nginx's default map hash bucket.
+    [ ${#secret} -ge 16 ] && [ ${#secret} -le 40 ] || { echo "40-turbo-tune: TURBO_REFRESH_SECRET must be 16-40 characters" >&2; exit 1; }
+    # The directory is read-only when the multi-site stack mounts per-site secrets there.
+    if [ -w /etc/nginx/turbo/refresh ]; then
+        printf '"~^%s$" 1;\n' "$secret" > /etc/nginx/turbo/refresh/env.map
+    fi
+fi
 cp "$src/turbo-http.conf" "$src/turbo-wordpress.conf" /etc/nginx/turbo/
 sed "s/fastcgi_cache_valid 200 301 302 [0-9smhd]*;/fastcgi_cache_valid 200 301 302 $ttl;/" \
     "$src/turbo-php-cache.conf" > /etc/nginx/turbo/turbo-php-cache.conf

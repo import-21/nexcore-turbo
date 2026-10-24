@@ -54,6 +54,7 @@ if [ "$uninstall" = 1 ]; then
     [ -f "$manifest" ] || die "nothing to uninstall ($manifest missing)"
     while read -r f; do run rm -f "$f"; done < "$manifest"
     run rm -f "$manifest"
+    run rmdir "$nginx_dir/turbo/refresh" 2>/dev/null || true
     run rmdir "$nginx_dir/turbo" 2>/dev/null || true
     say "removed. Remove the include lines from your server blocks, then reload nginx and php-fpm."
     exit 0
@@ -95,7 +96,16 @@ fi
 say "nginx config: $nginx_conf (http includes: $http_dir, user: ${nginx_user:-?})"
 [ "$dry" = 1 ] || { mkdir -p "$nginx_dir/turbo"; : > "$manifest.new"; manifest="$manifest.new"; }
 
-put "$here/nginx/turbo-http.conf" "$nginx_dir/turbo/turbo-http.conf"
+sed "s#/etc/nginx/turbo/#$nginx_dir/turbo/#g" "$here/nginx/turbo-http.conf" | put - "$nginx_dir/turbo/turbo-http.conf"
+# Refresh-on-update secret (kept across reinstalls). WordPress needs the same
+# value: see the message printed at the end.
+if [ -f "$nginx_dir/turbo/refresh/site.map" ]; then
+    refresh_secret=$(sed -n 's/^"~^\([A-Za-z0-9_-]*\)\$".*/\1/p' "$nginx_dir/turbo/refresh/site.map")
+else
+    refresh_secret=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    printf '"~^%s$" 1;\n' "$refresh_secret" | put - "$nginx_dir/turbo/refresh/site.map"
+    [ "$dry" = 1 ] || chmod 600 "$nginx_dir/turbo/refresh/site.map"
+fi
 sed "s/fastcgi_cache_valid 200 301 302 [0-9smhd]*;/fastcgi_cache_valid 200 301 302 $ttl;/" \
     "$here/nginx/turbo-php-cache.conf" | put - "$nginx_dir/turbo/turbo-php-cache.conf"
 sed "s#/etc/nginx/turbo/#$nginx_dir/turbo/#g" "$here/nginx/turbo-wordpress.conf" \
@@ -159,3 +169,7 @@ say "installed. Next: add to your server{} block"
 say "    set \$turbo_php_upstream unix:/path/to/php-fpm.sock;"
 say "    include $nginx_dir/turbo/turbo-wordpress.conf;"
 say "then: nginx -t && reload nginx${php_ini_dirs:+ and php-fpm}"
+say ""
+say "WordPress: copy wordpress/nexcore-turbo-refresh.php to wp-content/mu-plugins/ and add to wp-config.php:"
+say "    define('TURBO_REFRESH_SECRET', '$refresh_secret');"
+say "    define('TURBO_REFRESH_URL', 'http://127.0.0.1');   // how this server reaches nginx"

@@ -8,8 +8,9 @@ services:
     depends_on: [wordpress]
     ports: ["${HTTP_PORT:-8080}:80"]
     environment:
-      TURBO_CACHE_TTL: ${TURBO_CACHE_TTL:-60s}
+      TURBO_CACHE_TTL: ${TURBO_CACHE_TTL:-10m}
       TURBO_NGINX_WORKERS: ${TURBO_NGINX_WORKERS:-}
+      TURBO_REFRESH_SECRET: ${TURBO_REFRESH_SECRET:?set TURBO_REFRESH_SECRET in .env (16-40 random letters/digits)}
     volumes:
       - ../../nginx/nginx.conf:/opt/turbo/nginx.conf:ro
       - ../../nginx/turbo-http.conf:/opt/turbo/turbo-http.conf:ro
@@ -30,8 +31,11 @@ services:
       WORDPRESS_DB_NAME: ${DB_NAME:-wordpress}
       WORDPRESS_DB_USER: ${DB_USER:-wordpress}
       WORDPRESS_DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      TURBO_REFRESH_SECRET: ${TURBO_REFRESH_SECRET:?set TURBO_REFRESH_SECRET in .env (16-40 random letters/digits)}
+      TURBO_REFRESH_URL: http://nginx
     volumes:
       - wp-files:/var/www/html
+      - ../../wordpress/nexcore-turbo-refresh.php:/var/www/html/wp-content/mu-plugins/nexcore-turbo-refresh.php:ro
       - ../../php/turbo-opcache.ini:/usr/local/etc/php/conf.d/zz-turbo-opcache.ini:ro
       - ../../php/turbo-fpm.conf:/usr/local/etc/php-fpm.d/zz-turbo.conf:ro
     restart: unless-stopped
