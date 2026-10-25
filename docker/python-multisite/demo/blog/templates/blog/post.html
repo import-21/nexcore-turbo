@@ -1,0 +1,4 @@
+{% extends "blog/base.html" %}
+{% block title %}{{ post.title }}{% endblock %}
+{% block main %}<article><h1>{{ post.title }}</h1><time>{{ post.published|date:"Y-m-d H:i" }}</time>
+{{ post.body|linebreaks }}</article>{% endblock %}

@@ -1,0 +1,19 @@
+nexcore-turbo Django density benchmark 2026-10-25T00:45:26+00:00  mode=turbo
+host: Linux x86_64, stack pinned to 2 CPUs (load generator on separate CPUs), budget 2048 MiB, p95 <= 500 ms
+load: 0.5 visits/s per site, 10% uncached searches, 60s warm-up then 60s measured per step, 10 posts per site
+sites  rate/s  p95(ms)  p95-uncached(ms)  errors  mem(MiB)  cpu(%)  idle-mem(MiB)  result  notes
+  100      50       55                82       0      1161      19             98  PASS  active-sites=42 non200=[] app=[]
+  150      75       83               195       0      1491      51            118  PASS  active-sites=60 non200=[] app=[]
+  200     100      160               177       0      1505      50            138  PASS  active-sites=60 non200=[] app=[]
+  250     125      161               206       0      1544      43            158  PASS  active-sites=60 non200=[] app=[]
+  300     150      160               191       0      1586      95            179  PASS  active-sites=59 non200=[] app=[]
+  400     200      162               220       0      1566     131            220  PASS  active-sites=60 non200=[] app=[]
+(run 1 ended: no more steps; run 2 continues from 500 sites on a fresh stack)
+nexcore-turbo Django density benchmark 2026-10-25T01:29:39+00:00  mode=turbo
+host: Linux x86_64, stack pinned to 2 CPUs (load generator on separate CPUs), budget 2048 MiB, p95 <= 500 ms
+load: 0.5 visits/s per site, 10% uncached searches, 60s warm-up then 60s measured per step, 10 posts per site
+sites  rate/s  p95(ms)  p95-uncached(ms)  errors  mem(MiB)  cpu(%)  idle-mem(MiB)  result  notes
+  500     250      163               277       0      1641     109            253  PASS  active-sites=60 non200=[] app=[]
+  600     300      201               513       0      1687     194            295  PASS  active-sites=59 non200=[] app=[]
+  700     350      741              5512      57      1425     201            337  FAIL(p95)  active-sites=58 non200=[] app=[]
+

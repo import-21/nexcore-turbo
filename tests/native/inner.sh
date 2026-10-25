@@ -81,7 +81,7 @@ cache_status -H 'Host: a.test' "$B/host" >/dev/null
 expect_match "host isolation" '^host=b\.test' "$(curl -s -H 'Host: b.test' "$B/host")"
 p1=$(curl -s "$B/ttl"); sleep 6; curl -s -o /dev/null "$B/ttl"; sleep 1; p2=$(curl -s "$B/ttl")
 [ "$p1" != "$p2" ] && pass "entry refreshed after --ttl 4s" || fail "entry refreshed after --ttl 4s" "$p1"
-secret=$(sed -n 's/^"~^\([A-Za-z0-9_-]*\)\$".*/\1/p' /etc/nginx/turbo/refresh/site.map)
+secret=$(sed -n 's/^"~.*[|^]\([A-Za-z0-9_-]\{16,\}\)\$".*/\1/p' /etc/nginx/turbo/refresh/site.map)
 expect_match "installer generated a refresh secret" '^[0-9a-f]{32}$' "$secret"
 r1=$(curl -s "$B/refresh-me"); sleep 0.2
 expect_eq "wrong refresh secret ignored" "$r1" "$(curl -s -H 'X-Turbo-Refresh: nope' "$B/refresh-me")"

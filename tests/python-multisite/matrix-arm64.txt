@@ -1,0 +1,2 @@
+# PYTHON_TAG     DJANGO           GUNICORN          PLATFORM
+3.12-slim        django==6.1.*    gunicorn==26.*    linux/arm64

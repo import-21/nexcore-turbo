@@ -1,0 +1,56 @@
+# nexcore-turbo python multi-site: many Django (or any WSGI) sites on one nginx
+# and one preloaded site server. Idle sites use no memory.
+#   docker compose up -d --build
+#   sh add-site.sh blog1 --domain example.test        ->  http://blog1.example.test
+#   sh add-site.sh shop --from ./myproject --wsgi myproject.wsgi:application
+name: ${COMPOSE_PROJECT_NAME:-turbo-py}
+
+services:
+  nginx:
+    image: nginx:${NGINX_VERSION:-1.26-alpine}
+    depends_on: [app]
+    ports: ["${HTTP_PORT:-8080}:80"]
+    environment:
+      TURBO_CACHE_TTL: ${TURBO_CACHE_TTL:-1h}
+      TURBO_NGINX_WORKERS: ${TURBO_NGINX_WORKERS:-}
+    volumes:
+      - ../../nginx/nginx.conf:/opt/turbo/nginx.conf:ro
+      - ../../nginx/turbo-http.conf:/opt/turbo/turbo-http.conf:ro
+      - ../../nginx/turbo-php-cache.conf:/opt/turbo/turbo-php-cache.conf:ro
+      - ../../nginx/turbo-proxy-cache.conf:/opt/turbo/turbo-proxy-cache.conf:ro
+      - ../../nginx/turbo-wordpress.conf:/opt/turbo/turbo-wordpress.conf:ro
+      - ../wordpress/40-turbo-tune.sh:/docker-entrypoint.d/40-turbo-tune.sh:ro
+      - ./site.conf:/etc/nginx/conf.d/default.conf:ro
+      - sites:/srv/sites:ro
+      - refresh:/etc/nginx/turbo/refresh:ro
+      - run:/run/turbo
+    tmpfs:
+      - /var/cache/nginx/turbo-proxy:size=${TURBO_CACHE_SIZE:-600m}
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ../..
+      dockerfile: docker/python-multisite/Dockerfile
+      args:
+        PYTHON_TAG: ${PYTHON_TAG:-3.12-slim}
+        DJANGO: ${DJANGO:-django==5.2.*}
+        GUNICORN: ${GUNICORN:-gunicorn==23.*}
+    image: nexcore-turbo-python:${TURBO_IMAGE_TAG:-3.12-slim}
+    environment:
+      TURBO_IDLE: ${TURBO_IDLE:-10}              # seconds without requests before a site stops
+      TURBO_MAX_ACTIVE: ${TURBO_MAX_ACTIVE:-60}  # sites running at the same time
+      TURBO_SITE_WORKERS: ${TURBO_SITE_WORKERS:-1}
+      TURBO_SITE_THREADS: ${TURBO_SITE_THREADS:-1}
+      TURBO_SOCKET_GID: "101"                    # nginx's group in nginx:alpine; sites can't connect to each other
+    volumes:
+      - sites:/srv/sites
+      - refresh:/srv/refresh
+      - run:/run/turbo
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+volumes:
+  sites:
+  refresh:
+  run:

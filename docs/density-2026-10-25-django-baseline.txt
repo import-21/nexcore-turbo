@@ -1,0 +1,8 @@
+nexcore-turbo Django density benchmark 2026-10-24T23:28:16+00:00  mode=baseline
+host: Linux x86_64, stack pinned to 2 CPUs (load generator on separate CPUs), budget 2048 MiB, p95 <= 500 ms
+load: 0.5 visits/s per site, 10% uncached searches, 60s warm-up then 60s measured per step, 10 posts per site, gunicorn -w 2 per site
+sites  rate/s  p95(ms)  p95-uncached(ms)  errors  mem(MiB)  cpu(%)  idle-mem(MiB)  result  notes
+   20      10        8                 6       0      1497       6           1370  PASS  
+   24      12        6                 6       0      1799       5           1774  PASS  
+   26      13        6                 6       0      1950       8           1939  PASS  
+   28      14        9                 6       0      2103       8           2091  FAIL(memory)  

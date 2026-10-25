@@ -1,0 +1,8 @@
+# PYTHON_TAG     DJANGO           GUNICORN          PLATFORM
+3.8-slim         django==4.2.*    gunicorn==20.1.*  -
+3.10-slim        django==4.2.*    gunicorn==21.*    -
+3.11-slim        django==5.2.*    gunicorn==22.*    -
+3.12-slim        django==5.2.*    gunicorn==23.*    -
+3.12-alpine      django==6.1.*    gunicorn==26.*    -
+3.13-slim        django==6.1.*    gunicorn==26.*    -
+3.14-slim        django==6.1.*    gunicorn==26.*    -

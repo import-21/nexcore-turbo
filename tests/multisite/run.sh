@@ -83,9 +83,12 @@ expect_eq "post cached" "HIT" "$(status beta /fresh/)"
 dc exec -T -u www-data php wp --path=/srv/sites/beta post update "$pid" --post_content=v2-content >/dev/null 2>&1
 expect_match "update visible immediately" 'v2-content' "$(get beta /fresh/)"
 expect_eq "still served from cache" "HIT" "$(status beta /fresh/)"
-alpha_secret=$(dc exec -T php sed -n 's/^"~^\([0-9a-f]*\)\$".*/\1/p' /srv/refresh/alpha.map | tr -d '\r')
+alpha_secret=$(dc exec -T php sed -n 's/^"~.*|\([0-9a-f]*\)\$".*/\1/p' /srv/refresh/alpha.map | tr -d '\r')
 expect_match "per-site secret generated" '^[0-9a-f]{32}$' "$alpha_secret"
 expect_eq "site secrets stay out of the web root" "no" "$(dc exec -T php sh -c 'grep -rl "$0" /srv/sites/beta 2>/dev/null' "$alpha_secret" | grep -q . && echo yes || echo no)"
+expect_eq "alpha's secret cannot refresh beta" "HIT" "$(cache_status -H 'Host: beta.test' -H "X-Turbo-Refresh: $alpha_secret" "$B/fresh/")"
+status alpha / >/dev/null
+expect_eq "alpha's secret refreshes alpha" "BYPASS" "$(cache_status -H 'Host: alpha.test' -H "X-Turbo-Refresh: $alpha_secret" "$B/")"
 
 echo "-- add/remove at runtime"
 expect_eq "site unknown before adding" "404" "$(code delta /)"

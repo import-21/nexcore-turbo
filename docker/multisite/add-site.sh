@@ -61,7 +61,7 @@ refresh=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 php -u www-data php wp --path="/srv/sites/$name" config set WPMU_PLUGIN_DIR /srv/core/turbo-mu-plugins --quiet
 php -u www-data php wp --path="/srv/sites/$name" config set TURBO_REFRESH_URL http://nginx --quiet
 php -u www-data php wp --path="/srv/sites/$name" config set TURBO_REFRESH_SECRET "$refresh" --quiet
-php php sh -c "printf '\"~^%s\$\" 1;\\n' '$refresh' > /srv/refresh/$name.map"
+php php sh -c "printf '\"~^%s\\\\.[^|]*\\\\|%s\$\" 1;\\n' '$name' '$refresh' > /srv/refresh/$name.map"
 admin_pass=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
 php -u www-data php wp --path="/srv/sites/$name" core install --url="http://$name.$domain" \
     --title="${title:-$name}" --admin_user=admin --admin_password="$admin_pass" \

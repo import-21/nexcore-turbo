@@ -100,10 +100,10 @@ sed "s#/etc/nginx/turbo/#$nginx_dir/turbo/#g" "$here/nginx/turbo-http.conf" | pu
 # Refresh-on-update secret (kept across reinstalls). WordPress needs the same
 # value: see the message printed at the end.
 if [ -f "$nginx_dir/turbo/refresh/site.map" ]; then
-    refresh_secret=$(sed -n 's/^"~^\([A-Za-z0-9_-]*\)\$".*/\1/p' "$nginx_dir/turbo/refresh/site.map")
+    refresh_secret=$(sed -n 's/^"~.*[|^]\([A-Za-z0-9_-]\{16,\}\)\$".*/\1/p' "$nginx_dir/turbo/refresh/site.map")
 else
     refresh_secret=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
-    printf '"~^%s$" 1;\n' "$refresh_secret" | put - "$nginx_dir/turbo/refresh/site.map"
+    printf '"~\\|%s$" 1;\n' "$refresh_secret" | put - "$nginx_dir/turbo/refresh/site.map"
     [ "$dry" = 1 ] || chmod 600 "$nginx_dir/turbo/refresh/site.map"
 fi
 sed "s/fastcgi_cache_valid 200 301 302 [0-9smhd]*;/fastcgi_cache_valid 200 301 302 $ttl;/" \

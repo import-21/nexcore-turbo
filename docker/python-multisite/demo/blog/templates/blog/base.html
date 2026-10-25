@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}{{ request.get_host }}{% endblock %}</title></head>
+<body><header><a href="/">{{ request.get_host }}</a>
+<form action="/" method="get"><input name="s" value="{{ q|default:'' }}"><button>検索</button></form></header>
+<main>{% block main %}{% endblock %}</main></body></html>

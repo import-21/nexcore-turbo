@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nexcore-turbo"
 version = "0.1.0"
-description = "Pre-fork warm-up for gunicorn: workers share one warmed copy of your Django/Flask app"
+description = "Pre-fork warm-up for gunicorn and a scale-to-zero multi-site server for Django/Flask"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }

@@ -13,7 +13,7 @@ case "$ttl" in
     ""|*[!0-9smhd]*) echo "40-turbo-tune: invalid TURBO_CACHE_TTL '$ttl'" >&2; exit 1 ;;
 esac
 
-mkdir -p /etc/nginx/turbo/refresh /var/cache/nginx/turbo
+mkdir -p /etc/nginx/turbo/refresh /var/cache/nginx/turbo /var/cache/nginx/turbo-proxy
 secret="${TURBO_REFRESH_SECRET:-}"
 if [ -n "$secret" ]; then
     case "$secret" in *[!A-Za-z0-9_-]*) echo "40-turbo-tune: TURBO_REFRESH_SECRET may only contain A-Z a-z 0-9 _ -" >&2; exit 1 ;; esac
@@ -21,12 +21,22 @@ if [ -n "$secret" ]; then
     [ ${#secret} -ge 16 ] && [ ${#secret} -le 40 ] || { echo "40-turbo-tune: TURBO_REFRESH_SECRET must be 16-40 characters" >&2; exit 1; }
     # The directory is read-only when the multi-site stack mounts per-site secrets there.
     if [ -w /etc/nginx/turbo/refresh ]; then
-        printf '"~^%s$" 1;\n' "$secret" > /etc/nginx/turbo/refresh/env.map
+        printf '"~\\|%s$" 1;\n' "$secret" > /etc/nginx/turbo/refresh/env.map
     fi
 fi
-cp "$src/turbo-http.conf" "$src/turbo-wordpress.conf" /etc/nginx/turbo/
+# Pages unused for 10 minutes leave the cache; with a TTL in hours or days keep
+# them as long as the TTL, or rarely visited sites would lose theirs.
+case "$ttl" in
+    *h|*d) sed "s/inactive=10m/inactive=$ttl/" "$src/turbo-http.conf" > /etc/nginx/turbo/turbo-http.conf ;;
+    *) cp "$src/turbo-http.conf" /etc/nginx/turbo/ ;;
+esac
+cp "$src/turbo-wordpress.conf" /etc/nginx/turbo/
 sed "s/fastcgi_cache_valid 200 301 302 [0-9smhd]*;/fastcgi_cache_valid 200 301 302 $ttl;/" \
     "$src/turbo-php-cache.conf" > /etc/nginx/turbo/turbo-php-cache.conf
+if [ -f "$src/turbo-proxy-cache.conf" ]; then
+    sed "s/proxy_cache_valid 200 301 302 [0-9smhd]*;/proxy_cache_valid 200 301 302 $ttl;/" \
+        "$src/turbo-proxy-cache.conf" > /etc/nginx/turbo/turbo-proxy-cache.conf
+fi
 
 cpus=""
 if [ -r /sys/fs/cgroup/cpu.max ]; then

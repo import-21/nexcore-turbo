@@ -1,17 +1,22 @@
 # nexcore-turbo
 
-**同じ 2コア・2GB のサーバーに、WordPress サイトを約10倍載せるための設定集です。**
+**同じ 2コア・2GB のサーバーに、WordPress や Django のサイトを10倍以上載せるための設定集です。**
 
-| 2コア・2GB に載ったサイト数 | 従来の構成<br>（1サイト＝公式 WordPress コンテナ1つ） | nexcore-turbo<br>（`docker/multisite`） |
+| 2コア・2GB に載ったサイト数 | 従来の構成 | nexcore-turbo |
 |---|---|---|
-| 重い負荷（1サイト1日 約4万PV） | **14サイト** | **150サイト**（約10.7倍） |
-| 標準的な負荷（1サイト1日 約4,300PV） | 14サイト（メモリで頭打ち） | **400サイト**（約28倍） |
+| **WordPress** 重い負荷（1サイト1日 約4万PV） | 14サイト | **150サイト**（約10.7倍） |
+| **WordPress** 標準的な負荷（1サイト1日 約4,300PV） | 14サイト（メモリで頭打ち） | **400サイト**（約28倍） |
+| **Django** 重い負荷（1サイト1日 約4万PV） | 26サイト | **600サイト**（約23倍） |
+| **Django** 標準的な負荷（1サイト1日 約4,300PV） | 26サイト（メモリで頭打ち） | **1,000サイト以上**（約38倍以上。1,000で計測を打ち切り） |
+
+従来の構成は、WordPress が「1サイト＝公式 WordPress コンテナ1つ」、Django が「1サイト＝コンテナ1つで gunicorn のワーカー2つ」です。
+nexcore-turbo は WordPress が `docker/multisite`、Django が `docker/python-multisite` です。
 
 合格条件はどちらも「エラー0件・応答時間の95%値が0.5秒以内・全コンテナのメモリ合計が2GB以内」です。
 条件と生データは [収容数ベンチマーク](#収容数ベンチマーク) を見てください。
 
-従来の構成は、サイトごとに Apache と PHP が丸ごと動き、同じ WordPress 本体を別々に読み込むため、
-アクセスがなくても1サイト約130MBを使います。nexcore-turbo は次の組み合わせで、
+従来の構成は、サイトごとに Apache と PHP（Django なら Python と gunicorn）が丸ごと動き、同じ WordPress 本体や
+Django を別々に読み込むため、アクセスがなくても1サイト約130MB（Django は約75MB）を使います。nexcore-turbo は次の組み合わせで、
 「同じものは1回だけ持つ・使っていないものは動かさない・同じ結果は作り直さない」ようにしています。
 
 | 技術 | 効果 |
@@ -21,8 +26,11 @@
 | WordPress 本体を全サイトで1つだけ共有（読み取り専用） | OPcache のコンパイルが全サイトで1回 |
 | PHP-FPM をサイトごとの ondemand プールに | アクセスのないサイトの PHP プロセスは0個 |
 | nginx・PHP-FPM・MariaDB を全サイトで1つずつ | サイトを増やしても、増えるのはファイルと DB のテーブルだけ |
+| Django：アクセスのないサイトは止める（`nexcore_turbo.multisite`） | 最初のアクセスで約0.05秒で起動し、10秒使われなければ終了。待機中のサイトのメモリは0 |
+| Django：Django 本体を読み込んだ1つのプロセスから各サイトを起動 | Django 本体のメモリを全サイトで共有。動いているサイトも1つ約23MB |
+| Django：同時に動かすサイト数に上限（初期値60） | 上限に達したら、いちばん長く使われていないサイトを止めて席を空ける |
 
-サイト同士は、PHP プールの分離と `open_basedir` で互いのファイルを読めないようにしています（テストで確認済み）。
+サイト同士は、PHP プールの分離と `open_basedir`（Django はサイトごとの Linux ユーザー）で互いのファイルを読めないようにしています（テストで確認済み）。
 
 新しい仕組みを発明したものではありません。定番の手法を**安全側の初期値で組み合わせ、壊れないことを
 自動テストで確かめた**ものです。1サイト単位の高速化や、Django / Flask 向けの部品も入っています。
@@ -30,6 +38,7 @@
 | 部品 | 内容 | 2コア・2GB での実測 |
 |---|---|---|
 | `docker/multisite/` | 多数の WordPress サイトを1組の nginx・PHP-FPM・MariaDB で動かす構成 | 上の表 |
+| `docker/python-multisite/` | 多数の Django / Flask（WSGI）サイトを1組の nginx とサイトサーバーで動かす構成 | 上の表 |
 | `nginx/` | ログインしていない訪問者向けのページキャッシュ（ログイン中・カート・POST・管理画面・API・クエリ付きURL・Cookie を発行するページはキャッシュしない） | 1サイトで **毎秒34件 → 約29,000件** |
 | `php/` | PHP 7.2 以降向けの OPcache（ファイルの編集は2秒以内に反映）、JIT（任意）、PHP-FPM のプール設定 | WordPress コンテナのメモリ **534MB → 130MB** |
 | `python/` | gunicorn 設定：preload、ワーカーを分ける前にページを1回表示、DB 接続を閉じる、GC を固定 | ワーカー1つあたりのメモリ **59〜81% 減** |
@@ -51,6 +60,32 @@ sh remove-site.sh shop1
 - 各サイトは自分の `wp-config.php` と `wp-content`（プラグイン・テーマ・アップロード）だけを持ちます。
   WordPress 本体の更新は、イメージを作り直して `docker compose up -d --build` するだけで全サイトに反映されます。
 - 遅いリクエスト（5秒以上）は PHP のバックトレース付きで `docker compose logs php` に出ます。
+
+### 多数の Django / Flask サイトを1台で動かす
+
+```sh
+cd docker/python-multisite
+docker compose up -d --build                     # http://<サイト名>.<ドメイン>:8080
+sh add-site.sh blog1 --domain example.com        # デモのブログ → http://blog1.example.com
+sh add-site.sh shop --domain example.com --from ./myproject --wsgi myproject.wsgi:application
+sh remove-site.sh shop
+```
+
+- `--from` のプロジェクトは `manage.py` があれば `migrate` と `collectstatic` を自動で実行し、`requirements.txt` があればそのサイト専用にインストールします。
+- サイトごとに `/srv/sites/<サイト名>/turbo.env` があり、`DJANGO_SECRET_KEY`・`DJANGO_ALLOWED_HOSTS`・DB の場所などを環境変数として渡します（`TURBO_WSGI` は必須）。
+- 各サイトは別々の Linux ユーザーで動き、他のサイトのコード・データ・設定を読めず、他のサイトのソケットにも接続できません。
+- `manage.py` のコマンドは `docker compose exec app python -m nexcore_turbo.multisite run <サイト名> python manage.py <コマンド>` で、そのサイトのユーザーとして実行します。
+- Django のバージョンは全サイト共通（イメージの `DJANGO` で指定）です。別のバージョンが必要なサイトは、別のスタックに分けてください。
+- サイトごとのメモリの上限（cgroup）はまだありません。
+
+| 環境変数 | 初期値 | 説明 |
+|---|---|---|
+| `TURBO_IDLE` | `10` | この秒数アクセスがなければサイトを止める |
+| `TURBO_MAX_ACTIVE` | `60` | 同時に動かすサイト数。1サイト約23MBとして、メモリに合わせて決める |
+| `TURBO_SITE_WORKERS` | `1` | サイトごとの gunicorn ワーカー数（上限 `TURBO_SITE_MAX_WORKERS`=4） |
+| `TURBO_PRELOAD` | `django,gunicorn` | 最初に1回だけ読み込んで全サイトで共有するパッケージ |
+
+記事を保存したらキャッシュをすぐ作り直すには、`nexcore_turbo.refresh.refresh(["/", obj.get_absolute_url()])` を `post_save` などから呼びます（デモのブログに例があります）。
 
 ### Docker で WordPress を1サイト動かす
 
@@ -127,18 +162,21 @@ Django の DB 接続とキャッシュは、ウォームアップの後に自動
 - `wp-admin`、`wp-login.php`、`wp-json`、`xmlrpc.php`、`wp-cron.php`
 - カート・購入手続き・マイアカウント、フィード、サイトマップ
 - `Authorization` ヘッダー付きのリクエスト
-- Cookie `wordpress_logged_in_*`、`wp-postpass_*`、`comment_author_*`、WooCommerce/EDD のカート、`PHPSESSID` を持つ訪問者
+- Cookie `wordpress_logged_in_*`、`wp-postpass_*`、`comment_author_*`、WooCommerce/EDD のカート、`PHPSESSID`、Django/Flask のセッション（`sessionid`・`session`）とメッセージ（`messages`）を持つ訪問者
+- `/admin/`、`/accounts/`、`/api/` で始まる URL
 
 **知っておくこと**：
 - 記事・固定ページ・コメント・メニュー・サイト名・テーマを変更すると、`wordpress/nexcore-turbo-refresh.php`（Docker 構成では組み込み済み）がそのページとトップページ・カテゴリーをすぐ作り直します。プラグインを入れていない場合や、それ以外の変更は最大で TTL かかります（期限切れ直後の1人目には、裏で更新している間だけ古いページが返ることがあります）。
-- 作り直しは、秘密の値を付けた `X-Turbo-Refresh` ヘッダーで nginx に依頼します。値を知らない人がこのヘッダーを付けても、普通の訪問者として扱われます。
+- 作り直しは、秘密の値を付けた `X-Turbo-Refresh` ヘッダーで nginx に依頼します。値を知らない人がこのヘッダーを付けても、普通の訪問者として扱われます。複数サイト構成では秘密の値はサイトごとに別で、あるサイトの値で他のサイトは作り直せません。
 - キャッシュのキーにはスキーム・メソッド・ホスト名・URL 全体を含むので、サイト同士で混ざりません。
 - Cookie を使わずに訪問者ごとに内容を変えるページ（IP アドレスや `User-Agent` で出し分けるなど）は、`Cache-Control: private` を返してください。
 - アップロードフォルダの PHP は実行されません。ドットファイル（`.env`、`.git` など）は配信しません。
 
 ## テスト済みの環境
 
-変更のたびに、`tests/` の4種類のテストで確認しています。
+変更のたびに、`tests/` の5種類のテストで確認しています。
+
+- `tests/python-multisite/`：Django の複数サイト構成で、サイト間の分離（設定・データ・コード・ソケット・プロセス）、root で動かないこと、キャッシュ、アクセスのないサイトの停止と再起動、同時起動数の上限と入れ替え、更新時の作り直し（他サイトの秘密の値では不可）、Flask サイトの追加、起動に失敗するサイトの扱い、再起動なしの追加・削除、正常終了を確認（51項目）
 
 - `tests/multisite/`：複数サイト構成で、サイト間でファイルが読めないこと、共有の本体を書き換えられないこと、本体のコンパイルが全サイトで1回であること、キャッシュが混ざらないこと、更新時の作り直し、アクセスのないサイトの PHP プロセスが0になること、再起動なしの追加・削除を確認（31項目、すべて通過）
 - `tests/wp/`：Docker 構成に wp-cli で本物の WordPress を入れ、キャッシュの HIT/MISS/BYPASS、ログイン、コメント、更新時の作り直し、プラグイン導入、OPcache の再読み込み、アップロードと PHP 実行の制限、再起動を確認
@@ -161,6 +199,19 @@ Django の DB 接続とキャッシュは、ウォームアップの後に自動
 | php8.4-fpm-alpine | 1.27-alpine | MySQL 8.4 | |
 | php8.4-fpm-alpine | 1.26-alpine | MariaDB 11.4 | JIT |
 | php8.3-fpm-alpine（**arm64**、QEMU） | 1.26-alpine | MariaDB 11.4（x86_64） | nginx と PHP を arm64 で実行 |
+
+**Django 複数サイト構成（`tests/python-multisite`、各51項目）**
+
+| Python | Django | gunicorn |
+|---|---|---|
+| 3.8 | 4.2 | 20.1 |
+| 3.10 | 4.2 | 21.2 |
+| 3.11 | 5.2 | 22.0 |
+| 3.12 | 5.2 | 23.0 |
+| 3.12 Alpine（musl） | 6.1 | 26.2 |
+| 3.13 | 6.1 | 26.2 |
+| 3.14 | 6.1 | 26.2 |
+| 3.12（**arm64**、QEMU） | 6.1 | 26.2 |
 
 **既存サーバー（`tests/native`、各31項目）**：標準パッケージのみ使用
 
@@ -204,6 +255,8 @@ Apache を PHP の前に置く構成、LiteSpeed。
 
 ## 収容数ベンチマーク
 
+### WordPress
+
 `bench/density.sh` は、同じ2コアにすべてのコンテナを固定し、サイトを段階的に増やしながら次を測ります。
 
 - **従来の構成**：1サイトにつき公式 `wordpress:php8.3-apache` コンテナを1つ。データベースは全サイトで1つ共有（従来側に有利な条件）
@@ -240,6 +293,47 @@ Apache を PHP の前に置く構成、LiteSpeed。
 
 従来の構成はアクセスがなくても1サイト約130MBを使うため、負荷に関係なくメモリで上限が決まります。
 nexcore-turbo はメモリに余裕があり、CPU（キャッシュの効かない検索などの処理）が上限を決めます。600サイトでは CPU が100%張り付き、待ちの PHP プロセスが溜まってメモリも超えました。
+
+### Django
+
+`bench/density-django.sh` で、同じ条件（2コア・2GB・同じアクセスの混ぜ方・同じ合格条件）で測りました。
+サイトはどちらもデモのブログ（記事10件、SQLite）で、DB のコンテナはありません。
+
+- **従来の構成**：1サイトにつきコンテナ1つで `gunicorn -w 2`（ワーカー2つ）
+- **nexcore-turbo**：`docker/python-multisite`（初期設定のまま。`TURBO_IDLE=10`、`TURBO_MAX_ACTIVE=60`）
+
+**重い負荷（1サイトあたり毎秒0.5件）**
+
+| | サイト数 | 応答時間 95%値 | 検索の95%値 | エラー | メモリ合計 | CPU | 動いていたサイト数 | 判定 |
+|---|---|---|---|---|---|---|---|---|
+| 従来 | 24 | 6ms | 6ms | 0 | 1,799MB | 5% | 24 | 合格 |
+| 従来 | 26 | 6ms | 6ms | 0 | 1,950MB | 8% | 26 | 合格 |
+| 従来 | 28 | 9ms | 6ms | 0 | 2,103MB | 8% | 28 | 不合格（メモリ） |
+| nexcore-turbo | 100 | 55ms | 82ms | 0 | 1,161MB | 19% | 42 | 合格 |
+| nexcore-turbo | 200 | 160ms | 177ms | 0 | 1,505MB | 50% | 60 | 合格 |
+| nexcore-turbo | 400 | 162ms | 220ms | 0 | 1,566MB | 131% | 60 | 合格 |
+| nexcore-turbo | 500 | 163ms | 277ms | 0 | 1,641MB | 109% | 60 | 合格 |
+| nexcore-turbo | 600 | 201ms | 513ms | 0 | 1,687MB | 194% | 59 | 合格 |
+| nexcore-turbo | 700 | 741ms | 5,512ms | 57 | 1,425MB | 201% | 58 | 不合格（CPU） |
+
+（400サイトまでと500サイトからは、別々に新しく作った環境での計測です）
+
+**標準的な負荷（1サイトあたり毎秒0.05件）**
+
+| | サイト数 | 応答時間 95%値 | 検索の95%値 | エラー | メモリ合計 | CPU | 動いていたサイト数 | 判定 |
+|---|---|---|---|---|---|---|---|---|
+| 従来 | 26 | – | – | – | 約1,940MB（待機時） | – | 26 | 上限（メモリ） |
+| nexcore-turbo | 200 | 73ms | 87ms | 0 | 322MB | 8% | 8 | 合格 |
+| nexcore-turbo | 400 | 75ms | 85ms | 0 | 762MB | 21% | 21 | 合格 |
+| nexcore-turbo | 600 | 74ms | 89ms | 0 | 1,122MB | 35% | 26 | 合格 |
+| nexcore-turbo | 800 | 63ms | 82ms | 0 | 1,355MB | 32% | 47 | 合格 |
+| nexcore-turbo | 1,000 | 160ms | 187ms | 0 | 1,700MB | 59% | 58 | 合格 |
+
+（生データ：[従来](docs/density-2026-10-25-django-baseline.txt)、[重い負荷](docs/density-2026-10-25-django-heavy.txt)、[標準的な負荷](docs/density-2026-10-25-django-typical.txt)）
+
+従来の構成は CPU に余裕があってもメモリで止まります。nexcore-turbo は、同時に動くサイト数の上限（60）で
+メモリを2GB以内に抑え、上限に達したら使われていないサイトから入れ替えるため、メモリは1.7GB前後で頭打ちになり、
+最後は CPU（重い負荷では700サイトで200%）が上限を決めます。
 
 ## 1サイトの速度ベンチマーク
 
