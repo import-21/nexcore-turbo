@@ -165,7 +165,7 @@ for n in $STEPS; do
     # use): every page was viewed once above; now run the traffic mix for WARM.
     docker run --rm ${K6_CPUS:+--cpuset-cpus "$K6_CPUS"} --network "$net" -v "$work:/bench" -e RATE="$rate" \
         -e UNCACHED="$UNCACHED" -e DUR="$WARM" "$K6_IMAGE" run --quiet /bench/density.js >/dev/null 2>&1 || true
-    ( sleep 40; mem_total > "$work/mem"; cpu_total > "$work/cpu"
+    ( sleep $(( ${DUR%s} * 2 / 3 )); mem_total > "$work/mem"; cpu_total > "$work/cpu"
       docker stats --no-stream --format '{{.Name}}={{.CPUPerc}}/{{.MemUsage}}' $(containers) \
           | sed -E 's#turbo-density-|tdb-##; s# / [^ ]*##' | tr '\n' ' ' > "$work/split" ) &
     sampler=$!

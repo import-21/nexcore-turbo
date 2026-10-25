@@ -139,7 +139,7 @@ for n in $STEPS; do
     rate=$(awk "BEGIN{r=$n*$RATE_PER_SITE; printf \"%d\", (r<1?1:r+0.5)}")
     docker run --rm ${K6_CPUS:+--cpuset-cpus "$K6_CPUS"} --network "$net" -v "$work:/bench" -e RATE="$rate" \
         -e UNCACHED="$UNCACHED" -e DUR="$WARM" "$K6_IMAGE" run --quiet /bench/density.js >/dev/null 2>&1 || true
-    ( sleep 40; mem_total > "$work/mem"; cpu_total > "$work/cpu"
+    ( sleep $(( ${DUR%s} * 2 / 3 )); mem_total > "$work/mem"; cpu_total > "$work/cpu"
       if [ "$MODE" = turbo ]; then
           docker exec ${project}-app-1 sh -c 'ps -eo uid= | awk "\$1>=20000" | sort -u | wc -l' > "$work/active"
       fi ) &

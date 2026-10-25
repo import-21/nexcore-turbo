@@ -1,0 +1,19 @@
+# An older desktop PC (4-core CPU from 2013, 16 GB). Same 2 CPUs / 2 GB budget; shorter warm-up (30 s).
+# baseline run used DUR=30s, so its cpu(%) column was sampled after the load ended (ignore it; memory is flat).
+# The other services on the host were stopped for the turbo run.
+
+nexcore-turbo Django density benchmark 2026-10-25T19:19:28+09:00  mode=baseline
+host: Linux x86_64, stack pinned to 2 CPUs (load generator on separate CPUs), budget 2048 MiB, p95 <= 500 ms
+load: 0.5 visits/s per site, 10% uncached searches, 30s warm-up then 30s measured per step, 10 posts per site, gunicorn -w 2 per site
+sites  rate/s  p95(ms)  p95-uncached(ms)  errors  mem(MiB)  cpu(%)  idle-mem(MiB)  result  notes
+   20      10        8                 6       0      1494       0           1455  PASS  
+   26      13        8                 5       0      1944       0           1932  PASS  
+   30      15        7                 6       0      2245       0           2238  FAIL(memory)  
+
+nexcore-turbo Django density benchmark 2026-10-25T19:49:50+09:00  mode=turbo
+host: Linux x86_64, stack pinned to 2 CPUs (load generator on separate CPUs), budget 2048 MiB, p95 <= 500 ms
+load: 0.5 visits/s per site, 10% uncached searches, 30s warm-up then 60s measured per step, 10 posts per site
+sites  rate/s  p95(ms)  p95-uncached(ms)  errors  mem(MiB)  cpu(%)  idle-mem(MiB)  result  notes
+  200     100      158               182       0      1514      22            134  PASS  active-sites=60 non200=[] app=[]
+  400     200      162               254       0      1609     100            211  PASS  active-sites=60 non200=[] app=[]
+  600     300      231               576       0      1623     170            291  PASS  active-sites=60 non200=[] app=[]
