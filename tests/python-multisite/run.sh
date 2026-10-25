@@ -118,6 +118,13 @@ expect_eq "removed site 404" "404" "$(code gamma /)"
 expect_eq "removed site socket gone" "no" "$(dc exec -T app sh -c 'test -S /run/turbo/gamma.sock && echo yes || echo no')"
 expect_eq "remaining site fine" "200" "$(code beta '/?s=after')"
 
+echo "-- site stopped and started again while it runs"
+get beta '/?s=running' >/dev/null
+dc exec -T app sh -c 'mv /srv/sites/beta /srv/sites/.off-beta && kill -HUP 1 && sleep 0.05 && mv /srv/sites/.off-beta /srv/sites/beta && kill -HUP 1'
+sleep 3
+expect_eq "site answers after stop + start" "200" "$(code beta '/?s=back')"
+expect_eq "server survived (no restart)" "0" "$(docker inspect -f '{{.RestartCount}}' "${COMPOSE_PROJECT_NAME}-app-1")"
+
 echo "-- clean shutdown"
 dc stop -t 20 app >/dev/null 2>&1
 expect_eq "server exits 0 on SIGTERM" "0" "$(docker inspect -f '{{.State.ExitCode}}' "${COMPOSE_PROJECT_NAME}-app-1")"

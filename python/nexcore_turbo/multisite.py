@@ -102,7 +102,17 @@ def become(name):
     app_dir = os.path.join(home, "app")
     os.chdir(app_dir)
     sys.path[:0] = [app_dir, os.path.join(home, "lib")]
+    _unshadow(os.path.join(home, "lib"))
     return home
+
+
+def _unshadow(lib):
+    """A site that ships its own copy of a preloaded package (another Django version) gets its copy."""
+    for top in {m.partition(".")[0] for m in list(sys.modules)}:
+        if top in ("gunicorn", "nexcore_turbo") or not os.path.isdir(os.path.join(lib, top)):
+            continue
+        for mod in [m for m in sys.modules if m == top or m.startswith(top + ".")]:
+            del sys.modules[mod]
 
 
 def _load(spec):
@@ -127,6 +137,14 @@ def serve_site(name, fd, shared):
         os.dup2(fd, 3)
     os.closerange(4, 65536)
     become(name)
+    logfile = os.environ.get("TURBO_LOG_FILE")   # per-site log, start-up errors included; rotated past 5 MB
+    if logfile:
+        if os.path.exists(logfile) and os.path.getsize(logfile) > 5 << 20:
+            os.replace(logfile, logfile + ".1")
+        out = os.open(logfile, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        os.dup2(out, 1)
+        os.dup2(out, 2)
+        os.close(out)
     try:  # setuid made us non-dumpable: let the site's own tools (ps, py-spy) see its processes
         ctypes.CDLL(None).prctl(4, 1, 0, 0, 0)   # PR_SET_DUMPABLE
     except (OSError, AttributeError):
@@ -182,8 +200,12 @@ def serve_site(name, fd, shared):
         "proc_name": "turbo-" + name,
         "user": os.getuid(),                  # gunicorn's defaults were computed while still root
         "group": os.getgid(),
-        "errorlog": "-",
-        "loglevel": "warning",
+        "errorlog": logfile or "-",
+        "accesslog": logfile,
+        "loglevel": os.environ.get("TURBO_LOG_LEVEL", "warning"),
+        # behind nginx on a unix socket: log the visitor, not "-"
+        "access_log_format": '%({x-real-ip}i)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"',
+        "control_socket_disable": True,       # gunicorn >= 26: its default path was computed as root
         "when_ready": when_ready,
         "pre_request": pre_request,
         "post_request": post_request,
@@ -192,7 +214,8 @@ def serve_site(name, fd, shared):
     class Site(BaseApplication):
         def load_config(self):
             for key, value in options.items():
-                self.cfg.set(key, value)
+                if key in self.cfg.settings:      # older gunicorn lacks some settings
+                    self.cfg.set(key, value)
 
         def load(self):
             return app
@@ -376,7 +399,7 @@ class Server:
                 break
             name = self.children.pop(pid, None)   # gunicorn workers orphaned to PID 1 are reaped too
             site = self.sites.get(name) if name else None
-            if site is None:
+            if site is None or site["pid"] != pid:   # removed (and maybe re-added) while it ran
                 continue
             code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -os.WTERMSIG(status)
             ok = code == 0
