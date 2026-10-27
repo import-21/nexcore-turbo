@@ -41,7 +41,9 @@ expect_match "beta cache never returns alpha" '<title>beta' "$(get beta /)"
 expect_eq "admin bypass" "BYPASS" "$(status alpha /wp-login.php)"
 
 echo "-- isolation between sites"
-dc exec -T -u www-data php sh -c "mkdir -p /srv/sites/alpha/wp-content && cat > /srv/sites/alpha/peek.php" <<'PHP'
+site_uid() { dc exec -T php stat -c %u "/srv/sites/$1" </dev/null | tr -d '\r'; }   # </dev/null: leave the caller's heredoc alone
+as_site() { u=$(site_uid "$1"); h=/srv/sites/$1/.turbo-tmp; shift; dc exec -T -u "$u:$u" -e HOME="$h" php "$@"; }
+as_site alpha sh -c "cat > /srv/sites/alpha/peek.php" <<'PHP'
 <?php
 header('Content-Type: text/plain');
 $r = @file_get_contents('/srv/sites/beta/wp-config.php');
@@ -49,11 +51,11 @@ echo $r === false ? 'blocked' : 'LEAKED';
 echo ' ', function_exists('shell_exec') && !in_array('shell_exec', array_map('trim', explode(',', ini_get('disable_functions')))) ? 'shell' : 'noshell';
 PHP
 expect_eq "site cannot read another site's files" "blocked noshell" "$(get alpha /peek.php?x=1)"
-dc exec -T -u www-data php sh -c "cat > /srv/sites/alpha/core-write.php" <<'PHP'
+as_site alpha sh -c "cat > /srv/sites/alpha/core-write.php" <<'PHP'
 <?php header('Content-Type: text/plain'); echo @file_put_contents('/srv/core/pwned.php', 'x') === false ? 'readonly' : 'WRITABLE';
 PHP
 expect_eq "site cannot modify the shared core" "readonly" "$(get alpha /core-write.php?x=1)"
-dc exec -T -u www-data php sh -c "cat > /srv/sites/alpha/opc.php" <<'PHP'
+as_site alpha sh -c "cat > /srv/sites/alpha/opc.php" <<'PHP'
 <?php header('Content-Type: text/plain'); echo opcache_get_status(false)['opcache_statistics']['num_cached_scripts'];
 PHP
 for s in alpha beta gamma; do get $s "/?s=warm$s" >/dev/null; done
@@ -62,7 +64,25 @@ for s in alpha beta gamma; do get $s "/?s=again$s" >/dev/null; get $s /wp-login.
 three=$(get alpha /opc.php?x=2)
 [ "${one:-0}" -gt 100 ] && [ "$three" -le $((one + 30)) ] && pass "WordPress core compiled once for all sites ($one -> $three scripts)" \
     || fail "WordPress core compiled once for all sites" "$one -> $three scripts"
-pi=$(dc exec -T -u www-data php wp --path=/srv/sites/beta plugin install hello-dolly --activate 2>&1 | tail -1)
+a_uid=$(site_uid alpha); b_uid=$(site_uid beta)
+expect_match "each site has its own uid" '^3000[0-9]+ 3000[0-9]+$' "$a_uid $b_uid"
+[ "$a_uid" != "$b_uid" ] && pass "uids differ ($a_uid / $b_uid)" || fail "uids differ" "$a_uid / $b_uid"
+expect_eq "another site's uid cannot read wp-config.php (no open_basedir needed)" "denied" "$(as_site alpha sh -c 'cat /srv/sites/beta/wp-config.php >/dev/null 2>&1 && echo LEAKED || echo denied')"
+expect_eq "another site's uid cannot list the site" "denied" "$(as_site alpha sh -c 'ls /srv/sites/beta >/dev/null 2>&1 && echo LISTED || echo denied')"
+expect_eq "another site cannot connect to the site's PHP socket" "denied" "$(as_site alpha sh -c 'test -w /run/php/beta.sock && echo OPEN || echo denied')"
+expect_eq "a site cannot connect to the health pool (runs as www-data)" "denied" "$(as_site alpha sh -c 'test -w /run/php/_health.sock && echo OPEN || echo denied')"
+expect_eq "wp-config.php readable by its site only" "600 $b_uid" "$(dc exec -T php stat -c '%a %u' /srv/sites/beta/wp-config.php | tr -d '\r')"
+as_site alpha sh -c "cat > /srv/sites/alpha/up.php" <<'PHP'
+<?php header('Content-Type: text/plain');
+file_put_contents(__DIR__ . '/wp-content/uploads/turbo-up.css', 'body{}');
+echo posix_geteuid(), ' ', sys_get_temp_dir(), ' ', session_save_path();
+PHP
+up=$(get alpha /up.php?x=1)
+expect_match "PHP runs as the site's uid" "^$a_uid " "$up"
+expect_match "temp files and sessions stay in the site's private dir" '/srv/sites/alpha/.turbo-tmp /srv/sites/alpha/.turbo-tmp$' "$up"
+expect_eq "files PHP uploads are served by nginx" "200" "$(code alpha /wp-content/uploads/turbo-up.css)"
+expect_eq "the private temp dir is never served" "403" "$(code alpha /.turbo-tmp/)"
+pi=$(as_site beta wp --path=/srv/sites/beta plugin install hello-dolly --activate 2>&1 | tail -1)
 expect_match "plugin installs into the site's own wp-content" 'Success' "$pi"
 expect_eq "plugin not visible to other sites" "no" "$(dc exec -T php test -e /srv/sites/alpha/wp-content/plugins/hello-dolly && echo yes || echo no)"
 get alpha "/?s=pool" >/dev/null
@@ -77,10 +97,10 @@ for i in 1 2 3 4 5; do get gamma / >/dev/null; done
 expect_match "cached hits keep pools idle" '^0$' "$(dc exec -T php ps 2>/dev/null | grep -c 'pool gamma' || true)"
 
 echo "-- refresh on update"
-pid=$(dc exec -T -u www-data php wp --path=/srv/sites/beta post create --post_status=publish --post_title=Fresh --post_name=fresh --post_content=v1-content --porcelain | tr -d '\r')
+pid=$(as_site beta wp --path=/srv/sites/beta post create --post_status=publish --post_title=Fresh --post_name=fresh --post_content=v1-content --porcelain | tr -d '\r')
 get beta /fresh/ >/dev/null
 expect_eq "post cached" "HIT" "$(status beta /fresh/)"
-dc exec -T -u www-data php wp --path=/srv/sites/beta post update "$pid" --post_content=v2-content >/dev/null 2>&1
+as_site beta wp --path=/srv/sites/beta post update "$pid" --post_content=v2-content >/dev/null 2>&1
 expect_match "update visible immediately" 'v2-content' "$(get beta /fresh/)"
 expect_eq "still served from cache" "HIT" "$(status beta /fresh/)"
 alpha_secret=$(dc exec -T php sed -n 's/^"~.*|\([0-9a-f]*\)\$".*/\1/p' /srv/refresh/alpha.map | tr -d '\r')

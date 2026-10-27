@@ -41,34 +41,45 @@ php db sh -c "mariadb -uroot -p\"\$MARIADB_ROOT_PASSWORD\" -e \"
     CREATE USER '$db'@'%' IDENTIFIED BY '$pass';
     GRANT ALL PRIVILEGES ON \\\`$db\\\`.* TO '$db'@'%';\""
 
+# Each site gets its own uid/gid (no passwd entry needed): next free number from 30001.
+uid=$(php php sh -c 'n=30000; for s in /srv/sites/*/; do [ -d "$s" ] || continue; u=$(stat -c %u "$s"); [ "$u" -gt "$n" ] && n=$u; done; echo $((n + 1))')
+NGINX_GID=101   # nginx's group in nginx:alpine: may read the site's files (static, uploads), nothing else may
+
 # The site gets its own wp-config.php and wp-content; everything else links to the shared core.
+# Ownership: site uid, group nginx, dirs 2750 (setgid: files PHP creates later stay readable by
+# nginx); other sites' uids can't even enter. find never follows the links into the shared core.
 php php sh -c '
     set -e; d=/srv/sites/'"$name"'
-    mkdir -p "$d/wp-content/plugins" "$d/wp-content/themes" "$d/wp-content/uploads" "$d/wp-content/upgrade"
+    mkdir -p "$d/wp-content/plugins" "$d/wp-content/themes" "$d/wp-content/uploads" "$d/wp-content/upgrade" "$d/.turbo-tmp"
     for f in /srv/core/*; do
-        case "${f##*/}" in wp-content|wp-config.php|wp-config-sample.php|readme.html|license.txt) continue ;; esac
+        case "${f##*/}" in wp-content|wp-config.php|wp-config-sample.php|readme.html|license.txt|turbo-compress.php) continue ;; esac
         ln -s "$f" "$d/${f##*/}"
     done
     for t in /srv/core/wp-content/themes/*/; do ln -s "${t%/}" "$d/wp-content/themes/"; done
     cp /srv/core/wp-content/index.php "$d/wp-content/"
-    chown -R www-data:www-data "$d/wp-content" && chown www-data:www-data "$d"'
-php -u www-data php wp --path="/srv/sites/$name" config create --dbname="$db" --dbuser="$db" \
-    --dbpass="$pass" --dbhost=db --skip-check --quiet
-php -u www-data php wp --path="/srv/sites/$name" config set WP_CONTENT_DIR "/srv/sites/$name/wp-content" --quiet
-php -u www-data php wp --path="/srv/sites/$name" config set WP_AUTO_UPDATE_CORE false --raw --quiet
+    find "$d" \( -type d -o -type f \) -exec chown '"$uid:$NGINX_GID"' {} +
+    find "$d" -type d -exec chmod 2750 {} +
+    find "$d" -type f -exec chmod 0640 {} +
+    chown '"$uid:$uid"' "$d/.turbo-tmp" && chmod 0700 "$d/.turbo-tmp"'
+# wp-cli runs as the site, with its HOME (wp-cli cache) in the site's private temp dir.
+wp() { dc exec -T -u "$uid:$uid" -e HOME="/srv/sites/$name/.turbo-tmp" php wp --path="/srv/sites/$name" "$@"; }
+wp config create --dbname="$db" --dbuser="$db" --dbpass="$pass" --dbhost=db --skip-check --quiet
+php php sh -c "chmod 0600 /srv/sites/$name/wp-config.php && chown $uid:$uid /srv/sites/$name/wp-config.php"   # DB password: the site only
+wp config set WP_CONTENT_DIR "/srv/sites/$name/wp-content" --quiet
+wp config set WP_AUTO_UPDATE_CORE false --raw --quiet
+wp config set FS_METHOD direct --quiet
 # Refresh-on-update: a per-site secret shared only with nginx, and the shared mu-plugin.
 refresh=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
-php -u www-data php wp --path="/srv/sites/$name" config set WPMU_PLUGIN_DIR /srv/core/turbo-mu-plugins --quiet
-php -u www-data php wp --path="/srv/sites/$name" config set TURBO_REFRESH_URL http://nginx --quiet
-php -u www-data php wp --path="/srv/sites/$name" config set TURBO_REFRESH_SECRET "$refresh" --quiet
+wp config set WPMU_PLUGIN_DIR /srv/core/turbo-mu-plugins --quiet
+wp config set TURBO_REFRESH_URL http://nginx --quiet
+wp config set TURBO_REFRESH_SECRET "$refresh" --quiet
 php php sh -c "printf '\"~^%s\\\\.[^|]*\\\\|%s\$\" 1;\\n' '$name' '$refresh' > /srv/refresh/$name.map"
 admin_pass=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
-php -u www-data php wp --path="/srv/sites/$name" core install --url="http://$name.$domain" \
-    --title="${title:-$name}" --admin_user=admin --admin_password="$admin_pass" \
-    --admin_email="$email" --skip-email --quiet
-php -u www-data php wp --path="/srv/sites/$name" rewrite structure '/%postname%/' --quiet
+wp core install --url="http://$name.$domain" --title="${title:-$name}" --admin_user=admin \
+    --admin_password="$admin_pass" --admin_email="$email" --skip-email --quiet
+wp rewrite structure '/%postname%/' --quiet
 
-php php sh -c "sed -e 's/__SITE__/$name/g' -e 's/__CHILDREN__/$children/g' /opt/turbo/pool.conf.template \
+php php sh -c "sed -e 's/__SITE__/$name/g' -e 's/__UID__/$uid/g' -e 's/__CHILDREN__/$children/g' /opt/turbo/pool.conf.template \
     > /usr/local/etc/php-fpm.d/site-$name.conf && php-fpm -t >/dev/null 2>&1"
 if [ "$reload" = 0 ]; then echo "site $name: http://$name.$domain  admin / $admin_pass (pool not loaded yet)"; exit 0; fi
 php php kill -USR2 1
