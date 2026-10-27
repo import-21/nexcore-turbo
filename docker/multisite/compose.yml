@@ -11,7 +11,9 @@ services:
     ports: ["${HTTP_PORT:-8080}:80"]
     environment:
       TURBO_CACHE_TTL: ${TURBO_CACHE_TTL:-24h}       # pages are replaced on update (refresh), so they can live long
-      TURBO_STRIP_TRACKING: ${TURBO_STRIP_TRACKING:-1}   # 0: utm_* / fbclid reach the app again (and bypass the cache)
+      TURBO_STRIP_TRACKING: ${TURBO_STRIP_TRACKING:-1}
+      TURBO_CACHE_SIZE: ${TURBO_CACHE_SIZE:-600m}     # cache tmpfs below; nginx keeps its limit 15% under it
+      TURBO_RATE_DYNAMIC: ${TURBO_RATE_DYNAMIC:-}     # cache misses per second per site (default 50)   # 0: utm_* / fbclid reach the app again (and bypass the cache)
       TURBO_NGINX_WORKERS: ${TURBO_NGINX_WORKERS:-}
     volumes:
       - ../../nginx/nginx.conf:/opt/turbo/nginx.conf:ro

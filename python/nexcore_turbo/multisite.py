@@ -82,6 +82,13 @@ SITE_MEMORY = os.environ.get("TURBO_SITE_MEMORY", "512M")
 SITE_PIDS = int(os.environ.get("TURBO_SITE_PIDS", "128"))       # processes + threads of one site
 SITE_CPUS = float(os.environ.get("TURBO_SITE_CPUS", "1"))
 LOCK_TMP = os.environ.get("TURBO_LOCK_TMP", "") in ("1", "true", "yes")
+# With TURBO_CGROUP set, a site never runs without its memory and process limits: if they can't
+# be set, the server refuses to start (or the site answers 503) instead of quietly running unlimited.
+REQUIRE_LIMITS = os.environ.get("TURBO_REQUIRE_LIMITS", "1" if CGROUP else "0") in ("1", "true", "yes")
+CRITICAL_LIMITS = ("memory.max", "pids.max")
+# Site starts per second, all sites together: a flood of uncached requests across many sites
+# can't turn the server into a fork loop. Over the rate, sites wait (they are not refused).
+SPAWN_RATE = float(os.environ.get("TURBO_SPAWN_RATE", "20"))
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 # __main__: old gunicorn releases start a server when gunicorn.__main__ is imported.
 SKIP_MODULES = re.compile(r"\.(tests?|testing|gis|oracle|mysql|postgresql|__main__|ImageTk|_tkinter_finder)(\.|$)|^django\.contrib\.gis|^PIL\.(features|report)$")   # they probe Tk / print a report on import
@@ -247,11 +254,15 @@ class Cgroups:
         """The site's group with its limits (re)applied; returns its path."""
         path = os.path.join(self.own, "site-" + name)
         os.makedirs(path, exist_ok=True)
+        missing = []
         for key, value in self.limits:
             try:
                 _cg_write(path, key, value)
             except OSError:
-                pass                              # no swap accounting, older kernel, ...
+                if key in CRITICAL_LIMITS:        # others are optional: no swap accounting, older kernel, ...
+                    missing.append(key)
+        if missing:
+            raise OSError("cannot set %s" % ", ".join(missing))
         return path
 
     def drop(self, name):
@@ -570,7 +581,11 @@ class Server:
                 self.cg = Cgroups(CGROUP, setup=True)
                 log.info("per-site cgroups in %s (memory %s, pids %d, cpus %s)", self.cg.own, SITE_MEMORY, SITE_PIDS, SITE_CPUS)
             except OSError as exc:
+                if REQUIRE_LIMITS:
+                    raise SystemExit("per-site cgroups unavailable (%s); refusing to run sites without their limits "
+                                     "(TURBO_REQUIRE_LIMITS=0 to allow rlimits only)" % exc)
                 log.error("per-site cgroups unavailable, rlimits only: %s", exc)
+        self.tokens, self.tokens_at = max(SPAWN_RATE, 1.0), time.monotonic()
         if LOCK_TMP:   # shared temp dirs: sites may create files there but not list each other's
             for d in ("/tmp", "/var/tmp", "/dev/shm"):
                 try:
@@ -675,11 +690,20 @@ class Server:
         if time.monotonic() < site["until"]:
             self._reject(site["sock"])           # crashing site: answer 503 instead of fork-looping
             return
+        if not self._spawn_token():
+            if name not in self.waiting:
+                self.waiting.append(name)        # over TURBO_SPAWN_RATE: wait for the next token
+            self.sel.unregister(site["sock"])
+            return
         cg = None
         if self.cg:
             try:
                 cg = self.cg.site(name)
             except OSError as exc:
+                if REQUIRE_LIMITS:
+                    self._backoff(name, "not started, its limits failed: %s" % exc)
+                    self._reject(site["sock"])
+                    return
                 log.error("site %s: cgroup: %s (rlimits only)", name, exc)
         self.sel.unregister(site["sock"])
         shared = mmap.mmap(-1, 16)                # last request time (double), requests in flight (int64)
@@ -717,6 +741,21 @@ class Server:
                 os._exit(code)
         site.update(pid=pid, started=time.monotonic(), clock=shared, stopping=False)
         self.children[pid] = name
+
+    def _tokens_now(self):
+        now = time.monotonic()
+        burst = max(SPAWN_RATE, 1.0)
+        self.tokens = min(burst, self.tokens + (now - self.tokens_at) * SPAWN_RATE)
+        self.tokens_at = now
+        return self.tokens
+
+    def _spawn_token(self):
+        if SPAWN_RATE <= 0:
+            return True
+        if self._tokens_now() < 1:
+            return False
+        self.tokens -= 1
+        return True
 
     def _evict(self):
         """All slots busy: stop the running site that has been idle the longest
@@ -825,6 +864,15 @@ class Server:
             self.reap()
         if self.waiting and len(self.children) >= self.max_active:
             self._evict()
+        # sites kept waiting by TURBO_SPAWN_RATE go back to their sockets as tokens come in
+        if self.waiting and len(self.children) < self.max_active:
+            room = self.max_active - len(self.children)
+            if SPAWN_RATE > 0:
+                room = min(room, int(self._tokens_now()))   # their spawns take the tokens
+            for name in self.waiting[:room]:
+                self.waiting.remove(name)
+                if name in self.sites and not self.sites[name]["pid"]:
+                    self.sel.register(self.sites[name]["sock"], selectors.EVENT_READ, name)
         if signal.SIGHUP in flags or (self.retry_at and time.monotonic() >= self.retry_at):
             self.scan()
         if self.auto:

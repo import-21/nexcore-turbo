@@ -30,6 +30,18 @@ case "$ttl" in
     *d) sed "s/inactive=24h/inactive=$ttl/" "$src/turbo-http.conf" > /etc/nginx/turbo/turbo-http.conf ;;   # keep pages as long as they are valid
     *) cp "$src/turbo-http.conf" /etc/nginx/turbo/ ;;
 esac
+# TURBO_CACHE_SIZE sizes the cache tmpfs (compose); nginx's own limit stays 15% below it, since
+# the cache manager evicts in the background and writes need room meanwhile.
+case "${TURBO_CACHE_SIZE:-}" in
+    "") ;;
+    *[!0-9mMgG]*|[mMgG]*) echo "40-turbo-tune: invalid TURBO_CACHE_SIZE '$TURBO_CACHE_SIZE'" >&2; exit 1 ;;
+    *)  mb=${TURBO_CACHE_SIZE%[mMgG]}; case "$TURBO_CACHE_SIZE" in *[gG]) mb=$((mb * 1024)) ;; esac
+        sed -i "s/max_size=[0-9]*[mg]/max_size=$((mb * 85 / 100))m/" /etc/nginx/turbo/turbo-http.conf ;;
+esac
+if [ "${TURBO_RATE_DYNAMIC:-}" ]; then   # cache misses per second per site (default 50)
+    case "$TURBO_RATE_DYNAMIC" in *[!0-9]*) echo "40-turbo-tune: invalid TURBO_RATE_DYNAMIC" >&2; exit 1 ;; esac
+    sed -i "/turbo:dynamic-rate/s/rate=[0-9]*r\/s/rate=${TURBO_RATE_DYNAMIC}r\/s/" /etc/nginx/turbo/turbo-http.conf
+fi
 if [ "${TURBO_STRIP_TRACKING:-1}" = 0 ]; then   # a site that reads utm_* on the server: queries bypass the cache again
     sed -i '/turbo:strip-tracking/s/ 1;/ 0;/' /etc/nginx/turbo/turbo-http.conf
 fi

@@ -116,6 +116,25 @@ curl -s -o /dev/null -H 'Host: flasky.test' -H 'X-Forwarded-Proto: http' "$B/ech
 expect_match "forged http scheme does not reach https visitors" 'proto=https<' "$(curl -s -H 'Host: flasky.test' -H 'X-Forwarded-Proto: https' "$B/echo")"
 expect_match "odd X-Forwarded-Proto never reaches the app" 'proto=http<' "$(curl -s -H 'Host: flasky.test' -H 'X-Forwarded-Proto: javascript' "$B/echo?raw=1")"
 
+echo "-- flood limits and access log"
+seq 1 300 | xargs -P 60 -I{} curl -s -o /dev/null -w '%{http_code}\n' -m 20 -H 'Host: flasky.test' "$B/echo?flood={}" > /tmp/turbo-flood.$$
+expect_match "a flood of uncached requests to one site gets 429" '^[1-9][0-9]*$' "$(grep -c '^429$' /tmp/turbo-flood.$$)"
+expect_eq "other sites unaffected by the flood" "200" "$(code alpha '/?s=afterflood')"
+rm -f /tmp/turbo-flood.$$
+status alpha / >/dev/null
+for i in $(seq 1 40); do curl -s -o /dev/null -A turbolog-hit -H 'Host: alpha.test' "$B/"; done
+for i in 1 2 3 4 5; do curl -s -o /dev/null -A turbolog-miss -H 'Host: alpha.test' "$B/?s=log$i"; done
+curl -s -o /dev/null -A turbolog-static -H 'Host: alpha.test' "$B/static/nope.css"
+sleep 7   # access log is buffered (flush=5s)
+logs=$(dc logs nginx 2>/dev/null)
+expect_eq "every cache miss is logged" "5" "$(echo "$logs" | grep -c turbolog-miss)"
+expect_eq "static 404 is logged" "1" "$(echo "$logs" | grep -c turbolog-static)"
+hits=$(echo "$logs" | grep -c turbolog-hit)
+[ "$hits" -lt 20 ] && pass "plain cache hits are sampled ($hits of 40 logged)" || fail "plain cache hits are sampled" "$hits of 40"
+out=$(dc run --rm -T -e TURBO_CGROUP=/no/such/cgroup app 2>&1); rc=$?
+[ $rc != 0 ] && pass "server refuses to run when required per-site limits are unavailable" || fail "server refuses to run without its limits" "rc=$rc"
+expect_match "and says why" 'refusing to run sites without their limits' "$out"
+
 echo "-- requests in flight are never cut off"
 t0=$(date +%s); r=$(curl -s -m 60 -o /dev/null -w '%{http_code}' -H 'Host: flasky.test' "$B/slow?s=$((TURBO_IDLE + 14))"); t1=$(date +%s)
 expect_eq "request longer than TURBO_IDLE + graceful stop completes" "200" "$r"
