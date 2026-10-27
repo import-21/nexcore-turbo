@@ -160,8 +160,13 @@ rm -f "$cjar"
 echo "-- refresh on update (no waiting for the TTL)"
 cache_status "$base/hello-turbo/" >/dev/null
 expect_match "post page cached" '^(HIT|UPDATING|STALE)$' "$(cache_status "$base/hello-turbo/")"
+curl -s -o /dev/null -H 'Accept-Encoding: gzip, deflate, br' "$base/hello-turbo/"   # a browser's copy, if the cache kept one per Accept-Encoding
+expect_eq "cached page is stored gzip-compressed" "gzip" "$(curl -s -o /dev/null -D - -H 'Accept-Encoding: gzip, deflate, br' "$base/hello-turbo/" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-encoding"{print $2}')"
 wp post update "$post_id" --post_content=updated-content >/dev/null
 expect_match "updated content served right after the update" 'updated-content' "$(curl -s "$base/hello-turbo/")"
+expect_match "browser (gzip) sees the update too" 'updated-content' "$(curl -s --compressed -H 'Accept-Encoding: gzip, deflate, br' "$base/hello-turbo/")"
+expect_eq "click ids share the cached page" "HIT" "$(cache_status "$base/hello-turbo/?utm_source=x&fbclid=y")"
+expect_eq "click id + real param is not cached" "BYPASS" "$(cache_status "$base/hello-turbo/?utm_source=x&p=1")"
 expect_match "and it is served from cache (refreshed, not bypassed)" '^(HIT|UPDATING|STALE)$' "$(cache_status "$base/hello-turbo/")"
 expect_match "home page refreshed too" 'hello-turbo' "$(curl -s "$base/")"
 expect_match "wrong refresh secret is just a visitor" '^(HIT|UPDATING|STALE)$' "$(cache_status -H 'X-Turbo-Refresh: guess' "$base/hello-turbo/")"

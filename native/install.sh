@@ -106,7 +106,7 @@ else
     printf '"~\\|%s$" 1;\n' "$refresh_secret" | put - "$nginx_dir/turbo/refresh/site.map"
     [ "$dry" = 1 ] || chmod 600 "$nginx_dir/turbo/refresh/site.map"
 fi
-sed "s/fastcgi_cache_valid 200 301 302 [0-9smhd]*;/fastcgi_cache_valid 200 301 302 $ttl;/" \
+sed "s/fastcgi_cache_valid 200 [0-9smhd]*;/fastcgi_cache_valid 200 $ttl;/" \
     "$here/nginx/turbo-php-cache.conf" | put - "$nginx_dir/turbo/turbo-php-cache.conf"
 sed "s#/etc/nginx/turbo/#$nginx_dir/turbo/#g" "$here/nginx/turbo-wordpress.conf" \
     | put - "$nginx_dir/turbo/turbo-wordpress.conf"

@@ -88,10 +88,12 @@ expect_eq "full slots free up by stopping the least recently used site (not afte
 
 echo "-- refresh on update"
 status beta /p/post-1/ >/dev/null; status beta /p/post-1/ >/dev/null
+curl -s -o /dev/null -m 20 -H 'Host: beta.test' -H 'Accept-Encoding: gzip, deflate, br' "$B/p/post-1/"   # a browser's copy, if the cache kept one per Accept-Encoding
 as_site beta python manage.py shell -c "from blog.models import Post; p = Post.objects.get(slug='post-1'); p.title = 'Updated title'; p.save()" >/dev/null 2>&1
 sleep 1
 expect_match "post page refreshed at once" 'Updated title' "$(get beta /p/post-1/)"
 expect_match "home page refreshed at once" 'Updated title' "$(get beta /)"
+expect_match "browser (gzip) sees the refresh too" 'Updated title' "$(curl -s --compressed -m 20 -H 'Host: beta.test' -H 'Accept-Encoding: gzip, deflate, br' "$B/p/post-1/")"
 expect_eq "refreshed page served from cache" "HIT" "$(status beta /p/post-1/)"
 expect_eq "wrong secret does not refresh" "HIT" "$(cache_status -H 'Host: beta.test' -H 'X-Turbo-Refresh: 0123456789abcdef0123456789abcdef' "$B/p/post-1/")"
 sec=$(dc exec -T app sh -c 'grep TURBO_REFRESH_SECRET /srv/sites/gamma/turbo.env | cut -d= -f2')
@@ -101,6 +103,29 @@ echo "-- any WSGI app (Flask with requirements.txt)"
 out=$(sh "$ps_dir/add-site.sh" flasky --domain test --from "$here/flaskapp" --wsgi app:app 2>&1); rc=$?
 expect_eq "add Flask site" "0" "$rc"; [ $rc = 0 ] || echo "$out" | tail -5
 expect_match "Flask site answers as its own uid" 'flask site flasky uid=2000[0-9]' "$(get flasky /)"
+
+echo "-- compressed cache, click ids, purge (security)"
+gz() { curl -s -m 20 -o /dev/null -D - -H "Host: flasky.test" -H 'Accept-Encoding: gzip' "$@" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-encoding"{print $2}'; }
+get flasky /echo >/dev/null
+expect_eq "cacheable page is stored gzip-compressed" "gzip" "$(gz "$B/echo")"
+expect_eq "compressed page is a cache hit" "HIT" "$(cache_status -H 'Host: flasky.test' -H 'Accept-Encoding: gzip' "$B/echo")"
+expect_match "client without gzip gets the plain page" '^<p>uri=/echo query= ' "$(get flasky /echo)"
+expect_eq "click ids share the cached page" "HIT" "$(status flasky '/echo?utm_source=x&utm_medium=social&fbclid=AbC-123_x')"
+dc exec -T nginx sh -c 'rm -rf /var/cache/nginx/turbo-proxy/*' >/dev/null 2>&1
+expect_match "click ids never reach the app" '^<p>uri=/echo query= ' "$(get flasky '/echo?utm_source=x&gclid=1')"
+expect_eq "';' cloaking is not stripped (no cache)" "BYPASS" "$(status flasky '/echo?utm_source=x;evil=1')"
+expect_match "';' cloaking reaches the app unchanged" 'query=utm_source=x;evil=1 ' "$(get flasky '/echo?utm_source=x;evil=1')"
+expect_eq "encoded name is not stripped (no cache)" "BYPASS" "$(status flasky '/echo?utm%5Fsource=x')"
+expect_eq "click id + real param is not stripped (no cache)" "BYPASS" "$(status flasky '/echo?utm_source=x&s=1')"
+expect_match "click id + real param reaches the app" 'query=utm_source=x&s=1 ' "$(get flasky '/echo?utm_source=x&s=1')"
+expect_match "client cannot set X-Turbo-Compress" 'compress=0<' "$(curl -s -m 20 -H 'Host: flasky.test' -H 'X-Turbo-Compress: 1' -H 'Cookie: sessionid=a' "$B/echo")"
+expect_eq "session request is not compressed by the app" "" "$(curl -s -m 20 -o /dev/null -D - -H 'Host: flasky.test' -H 'X-Turbo-Compress: 1' -H 'Cookie: sessionid=a' "$B/echo" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-encoding"{print $2}')"
+status flasky /echo >/dev/null; status alpha / >/dev/null
+expect_eq "flasky cached before purge" "HIT" "$(status flasky /echo)"
+out=$(sh "$ps_dir/purge-site.sh" flasky 2>&1); expect_match "purge-site drops the site's pages" 'flasky: [1-9][0-9]* cached' "$out"
+expect_eq "purged page is fetched again" "MISS" "$(status flasky /echo)"
+expect_eq "purge leaves other sites cached" "HIT" "$(status alpha /)"
+out=$(sh "$ps_dir/purge-site.sh" '.*' 2>&1); expect_match "purge refuses a pattern as name" 'usage' "$out"
 
 echo "-- broken site"
 sh "$ps_dir/add-site.sh" broken --domain test --from "$here/broken" --wsgi broken:application >/dev/null 2>&1

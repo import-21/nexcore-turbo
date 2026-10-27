@@ -11,7 +11,8 @@ services:
     depends_on: [app]
     ports: ["${HTTP_PORT:-8080}:80"]
     environment:
-      TURBO_CACHE_TTL: ${TURBO_CACHE_TTL:-1h}
+      TURBO_CACHE_TTL: ${TURBO_CACHE_TTL:-24h}       # pages are replaced on update (refresh), so they can live long
+      TURBO_STRIP_TRACKING: ${TURBO_STRIP_TRACKING:-1}   # 0: utm_* / fbclid reach the app again (and bypass the cache)
       TURBO_NGINX_WORKERS: ${TURBO_NGINX_WORKERS:-}
     volumes:
       - ../../nginx/nginx.conf:/opt/turbo/nginx.conf:ro
@@ -38,12 +39,26 @@ services:
         GUNICORN: ${GUNICORN:-gunicorn==23.*}
     image: nexcore-turbo-python:${TURBO_IMAGE_TAG:-3.12-slim}
     environment:
-      TURBO_IDLE: ${TURBO_IDLE:-10}              # seconds without requests before a site stops
-      TURBO_MAX_ACTIVE: ${TURBO_MAX_ACTIVE:-60}  # sites running at the same time
-      TURBO_SITE_WORKERS: ${TURBO_SITE_WORKERS:-1}
+      TURBO_IDLE: ${TURBO_IDLE:-60}              # seconds without requests before a site stops
+      TURBO_MAX_ACTIVE: ${TURBO_MAX_ACTIVE:-auto}  # sites running at once; auto = as many as TURBO_MEMORY_BUDGET holds
+      TURBO_MEMORY_BUDGET: ${TURBO_MEMORY_BUDGET:-}   # e.g. 1700M (leave room for nginx); empty = container limit / 90% of RAM
+      TURBO_SITE_WORKERS: ${TURBO_SITE_WORKERS:-2}
       TURBO_SITE_THREADS: ${TURBO_SITE_THREADS:-1}
       TURBO_SOCKET_GID: "101"                    # nginx's group in nginx:alpine; sites can't connect to each other
+      TURBO_LOCK_TMP: "1"                        # shared /tmp: sites can't list each other's files
+      TURBO_SITE_PIDS: ${TURBO_SITE_PIDS:-128}   # processes + threads per site (fork bomb stops there)
+      # Per-site memory / CPU limits (cgroup v2). On the host create a slice once:
+      #   printf '[Slice]\nMemoryAccounting=yes\nTasksAccounting=yes\nCPUAccounting=yes\n' > /etc/systemd/system/turbo.slice
+      #   systemctl daemon-reload && systemctl start turbo.slice
+      # then uncomment these lines and the cgroup_parent / cgroup / volume below.
+      # TURBO_CGROUP: /turbo-cg
+      # TURBO_SITE_MEMORY: 512M
+      # TURBO_SITE_CPUS: "1"
+    # cgroup_parent: turbo.slice
+    # cgroup: private
+    oom_score_adj: -900                          # out of memory: a site goes, never the server
     volumes:
+      # - /sys/fs/cgroup/turbo.slice:/turbo-cg
       - sites:/srv/sites
       - refresh:/srv/refresh
       - run:/run/turbo

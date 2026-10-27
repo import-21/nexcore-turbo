@@ -10,6 +10,8 @@ export const options = {
   summaryTrendStats: ["avg", "med", "p(95)", "max"],
 };
 export default function () {
-  const r = http.get(BASE + PATHS[Math.floor(Math.random() * PATHS.length)], { redirects: 0 });
+  // Like a browser: always asks for gzip (k6 sends no Accept-Encoding of its own).
+  const r = http.get(BASE + PATHS[Math.floor(Math.random() * PATHS.length)],
+                     { redirects: 0, headers: { "Accept-Encoding": "gzip, deflate, br" } });
   check(r, { "status 200": (x) => x.status === 200 });
 }

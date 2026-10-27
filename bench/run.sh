@@ -22,7 +22,7 @@ cp "$here/k6.js" "$work/k6.js"
 tc="docker compose -p turbo-bench -f $root/docker/wordpress/compose.yml -f $here/compose.limits.yml"
 cleanup() {
     docker compose -f "$here/compose.baseline.yml" down -v >/dev/null 2>&1 || true
-    DB_PASSWORD=bench $tc down -v >/dev/null 2>&1 || true
+    DB_PASSWORD=bench TURBO_REFRESH_SECRET=benchrefresh0123456789 $tc down -v >/dev/null 2>&1 || true
     rm -rf "$work"
 }
 trap cleanup EXIT INT TERM
@@ -73,7 +73,7 @@ k6 turbo-bench-baseline http://wordpress baseline
 docker compose -f "$here/compose.baseline.yml" down -v >/dev/null 2>&1
 
 echo "-- nexcore-turbo" | tee -a "$out"
-DB_PASSWORD=bench $tc up -d --quiet-pull >/dev/null 2>&1
+DB_PASSWORD=bench TURBO_REFRESH_SECRET=benchrefresh0123456789 $tc up -d --quiet-pull >/dev/null 2>&1
 setup_site turbo-bench turbo-bench-wordpress-1 82 http://nginx
 k6 turbo-bench http://nginx turbo
 echo "saved: $out"

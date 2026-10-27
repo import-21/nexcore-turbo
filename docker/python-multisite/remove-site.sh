@@ -9,4 +9,5 @@ dc() { docker compose -f "$here/compose.yml" "$@"; }
 dc exec -T app sh -c "test -d /srv/sites/$name || { echo 'no site $name' >&2; exit 1; }
     rm -rf /srv/sites/$name /srv/refresh/$name.map && kill -HUP 1"
 dc exec -T nginx nginx -s reload >/dev/null 2>&1
+sh "$here/purge-site.sh" "$name" >/dev/null
 echo "site $name removed"

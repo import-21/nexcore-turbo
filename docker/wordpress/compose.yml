@@ -8,7 +8,8 @@ services:
     depends_on: [wordpress]
     ports: ["${HTTP_PORT:-8080}:80"]
     environment:
-      TURBO_CACHE_TTL: ${TURBO_CACHE_TTL:-10m}
+      TURBO_CACHE_TTL: ${TURBO_CACHE_TTL:-24h}       # pages are replaced on update (refresh), so they can live long
+      TURBO_STRIP_TRACKING: ${TURBO_STRIP_TRACKING:-1}   # 0: utm_* / fbclid reach the app again (and bypass the cache)
       TURBO_NGINX_WORKERS: ${TURBO_NGINX_WORKERS:-}
       TURBO_REFRESH_SECRET: ${TURBO_REFRESH_SECRET:?set TURBO_REFRESH_SECRET in .env (16-40 random letters/digits)}
     volumes:
@@ -37,6 +38,8 @@ services:
       - wp-files:/var/www/html
       - ../../wordpress/nexcore-turbo-refresh.php:/var/www/html/wp-content/mu-plugins/nexcore-turbo-refresh.php:ro
       - ../../php/turbo-opcache.ini:/usr/local/etc/php/conf.d/zz-turbo-opcache.ini:ro
+      - ../../php/turbo-compress.ini:/usr/local/etc/php/conf.d/zz-turbo-compress.ini:ro
+      - ../../php/turbo-compress.php:/usr/local/etc/php/turbo-compress.php:ro
       - ../../php/turbo-fpm.conf:/usr/local/etc/php-fpm.d/zz-turbo.conf:ro
     restart: unless-stopped
 

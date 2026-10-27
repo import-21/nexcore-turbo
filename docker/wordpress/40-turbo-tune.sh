@@ -27,14 +27,17 @@ fi
 # Pages unused for 10 minutes leave the cache; with a TTL in hours or days keep
 # them as long as the TTL, or rarely visited sites would lose theirs.
 case "$ttl" in
-    *h|*d) sed "s/inactive=10m/inactive=$ttl/" "$src/turbo-http.conf" > /etc/nginx/turbo/turbo-http.conf ;;
+    *d) sed "s/inactive=24h/inactive=$ttl/" "$src/turbo-http.conf" > /etc/nginx/turbo/turbo-http.conf ;;   # keep pages as long as they are valid
     *) cp "$src/turbo-http.conf" /etc/nginx/turbo/ ;;
 esac
+if [ "${TURBO_STRIP_TRACKING:-1}" = 0 ]; then   # a site that reads utm_* on the server: queries bypass the cache again
+    sed -i '/turbo:strip-tracking/s/ 1;/ 0;/' /etc/nginx/turbo/turbo-http.conf
+fi
 cp "$src/turbo-wordpress.conf" /etc/nginx/turbo/
-sed "s/fastcgi_cache_valid 200 301 302 [0-9smhd]*;/fastcgi_cache_valid 200 301 302 $ttl;/" \
+sed "s/fastcgi_cache_valid 200 [0-9smhd]*;/fastcgi_cache_valid 200 $ttl;/" \
     "$src/turbo-php-cache.conf" > /etc/nginx/turbo/turbo-php-cache.conf
 if [ -f "$src/turbo-proxy-cache.conf" ]; then
-    sed "s/proxy_cache_valid 200 301 302 [0-9smhd]*;/proxy_cache_valid 200 301 302 $ttl;/" \
+    sed "s/proxy_cache_valid 200 [0-9smhd]*;/proxy_cache_valid 200 $ttl;/" \
         "$src/turbo-proxy-cache.conf" > /etc/nginx/turbo/turbo-proxy-cache.conf
 fi
 

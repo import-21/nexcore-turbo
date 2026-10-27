@@ -27,7 +27,9 @@ export default function () {
   const dyn = Math.random() < UNCACHED;
   if (dyn) path = "/?s=word" + Math.floor(Math.random() * 1000);
   const r = http.get(s.base + path, {
-    headers: s.host ? { Host: s.host } : {}, redirects: 0, timeout: "10s",
+    // Like a browser: always asks for gzip (k6 sends no Accept-Encoding of its own).
+    headers: Object.assign({ "Accept-Encoding": "gzip, deflate, br" }, s.host ? { Host: s.host } : {}),
+    redirects: 0, timeout: "10s",
     tags: { kind: dyn ? "uncached" : "page" },
   });
   check(r, { "status 200": (x) => x.status === 200 });
