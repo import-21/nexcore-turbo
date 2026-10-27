@@ -90,15 +90,18 @@ final class Nexcore_Turbo_Refresh
             if (empty($p['host']) || !empty($p['query'])) {
                 continue;   // pages with a query string are never cached
             }
-            wp_remote_get($target . ($p['path'] ?? '/'), [
-                'timeout'     => 10,
-                'redirection' => 0,
-                'sslverify'   => false,
-                'headers'     => [
-                    'Host'            => $p['host'] . (isset($p['port']) ? ':' . $p['port'] : ''),
-                    'X-Turbo-Refresh' => $secret,
-                ],
-            ]);
+            foreach (['https', 'http'] as $scheme) {   // the cache keeps one copy per forwarded scheme
+                wp_remote_get($target . ($p['path'] ?? '/'), [
+                    'timeout'     => 10,
+                    'redirection' => 0,
+                    'sslverify'   => false,
+                    'headers'     => [
+                        'Host'              => $p['host'] . (isset($p['port']) ? ':' . $p['port'] : ''),
+                        'X-Turbo-Refresh'   => $secret,
+                        'X-Forwarded-Proto' => $scheme,
+                    ],
+                ]);
+            }
         }
         self::$urls = [];
     }

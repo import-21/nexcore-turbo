@@ -71,6 +71,10 @@ SITE_WORKERS = int(os.environ.get("TURBO_SITE_WORKERS", "2"))   # pages nginx ca
 # (a gthread worker accepts ahead and would reset those).
 SITE_THREADS = int(os.environ.get("TURBO_SITE_THREADS", "1"))
 MAX_WORKERS = int(os.environ.get("TURBO_SITE_MAX_WORKERS", "4"))
+SITE_TIMEOUT = int(os.environ.get("TURBO_SITE_TIMEOUT", "30"))
+# A site with requests in flight is never stopped (idle or evicted). A count that outlives the
+# request timeout by this much is a leftover of a worker that died mid-request, not real work.
+BUSY_GRACE = 15
 LOG_MAX = int(os.environ.get("TURBO_LOG_MAX", str(5 << 20)))   # bytes; the site log is rotated past this
 DEFAULT_PRELOAD = "django,gunicorn,markdown,PIL,pygments"   # missing ones are skipped silently
 CGROUP = os.environ.get("TURBO_CGROUP", "")
@@ -339,6 +343,43 @@ def _compressing(app):
     return wrapped
 
 
+def _counter_lock():
+    """A lock shared by the site's master, its workers and their threads (created before gunicorn
+    forks the workers). POSIX semaphore when /dev/shm is usable, else an flock'd file in TMPDIR."""
+    try:
+        import multiprocessing
+        return multiprocessing.Lock()
+    except (OSError, ImportError):
+        import fcntl
+        import threading
+
+        class FileLock:
+            path = os.path.join(os.environ.get("TMPDIR", "/tmp"), ".turbo-busy.lock")
+
+            def __init__(self):
+                self.t = threading.Lock()
+                self.pid = self.fd = None
+
+            def acquire(self, timeout=None):
+                if not self.t.acquire(timeout=-1 if timeout is None else timeout):
+                    return False
+                if self.pid != os.getpid():       # forked worker: its own open file, or flock won't exclude
+                    self.fd, self.pid = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600), os.getpid()
+                fcntl.flock(self.fd, fcntl.LOCK_EX)
+                return True
+
+            def release(self):
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
+                self.t.release()
+
+            __enter__ = acquire
+
+            def __exit__(self, *exc):
+                self.release()
+
+        return FileLock()
+
+
 def _load(spec):
     module, _, attr = spec.partition(":")
     obj = importlib.import_module(module)
@@ -401,13 +442,22 @@ def serve_site(name, fd, shared):
         gc.collect()
         gc.freeze()
 
-    last = ctypes.c_double.from_buffer(shared)   # written by the worker(s), read by our master and the server
+    last = ctypes.c_double.from_buffer(shared)          # written by the worker(s), read by our master and the server
+    busy = ctypes.c_int64.from_buffer(shared, 8)         # requests in flight, same readers
+    lock = _counter_lock()
+    timeout = int(os.environ.get("TURBO_SITE_TIMEOUT", SITE_TIMEOUT))
 
     def touch(*_):
         last.value = time.monotonic()
 
     def check_idle(*_):
-        if time.monotonic() - last.value > IDLE:
+        idle = time.monotonic() - last.value
+        if busy.value > 0 and idle > timeout + BUSY_GRACE and lock.acquire(timeout=0.1):
+            try:
+                busy.value = 0                    # a worker died mid-request and never counted down
+            finally:
+                lock.release()
+        if idle > IDLE and busy.value <= 0:
             signal.setitimer(signal.ITIMER_REAL, 0)
             os.kill(os.getpid(), signal.SIGTERM)  # graceful: in-flight requests finish
             return
@@ -427,9 +477,13 @@ def serve_site(name, fd, shared):
         signal.setitimer(signal.ITIMER_REAL, 1, 1)
 
     def pre_request(worker, req):
+        with lock:
+            busy.value += 1
         touch()
 
     def post_request(worker, req, environ, resp):
+        with lock:
+            busy.value = max(0, busy.value - 1)
         touch()
 
     workers = max(1, min(int(os.environ.get("TURBO_SITE_WORKERS", SITE_WORKERS)), MAX_WORKERS))
@@ -439,7 +493,7 @@ def serve_site(name, fd, shared):
         "threads": threads,
         "worker_class": "gthread" if threads > 1 else "sync",
         "keepalive": 0,                       # gthread: never hold idle connections, or stopping an idle site waits for them
-        "timeout": int(os.environ.get("TURBO_SITE_TIMEOUT", "30")),
+        "timeout": timeout,
         "graceful_timeout": 10,
         "max_requests": 2000,
         "max_requests_jitter": 200,
@@ -628,8 +682,8 @@ class Server:
             except OSError as exc:
                 log.error("site %s: cgroup: %s (rlimits only)", name, exc)
         self.sel.unregister(site["sock"])
-        shared = mmap.mmap(-1, 8)
-        shared[:8] = struct.pack("d", 0.0)
+        shared = mmap.mmap(-1, 16)                # last request time (double), requests in flight (int64)
+        shared[:16] = struct.pack("dq", 0.0, 0)
         try:
             pid = os.fork()
         except OSError as exc:                   # out of processes or memory: 503 for this site, never die
@@ -671,9 +725,16 @@ class Server:
         if stopping >= len(self.waiting):
             return
         now = time.monotonic()
-        idle = [(struct.unpack("d", s["clock"][:8])[0], n) for n, s in self.sites.items()
-                if s["pid"] and not s.get("stopping")]
-        idle = [(t, n) for t, n in idle if t and now - t >= 1.0]   # not starting (0), not serving right now
+        idle = []
+        for n, s in self.sites.items():
+            if not s["pid"] or s.get("stopping"):
+                continue
+            t, busy = struct.unpack("dq", s["clock"][:16])
+            if not t or now - t < 1.0:
+                continue                                  # starting (0) or just served
+            if busy > 0 and now - t <= SITE_TIMEOUT + BUSY_GRACE:
+                continue                                  # a request is still running: never cut it off
+            idle.append((t, n))
         if idle:
             name = min(idle)[1]
             self.sites[name]["stopping"] = True

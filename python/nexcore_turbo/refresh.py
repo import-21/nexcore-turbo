@@ -15,8 +15,9 @@ import threading
 import urllib.request
 
 
-def _get(base, host, secret, path):
-    req = urllib.request.Request(base.rstrip("/") + path, headers={"Host": host, "X-Turbo-Refresh": secret})
+def _get(base, host, secret, path, scheme):
+    req = urllib.request.Request(base.rstrip("/") + path, headers={
+        "Host": host, "X-Turbo-Refresh": secret, "X-Forwarded-Proto": scheme})
     try:
         urllib.request.urlopen(req, timeout=10).close()
     except Exception:
@@ -33,7 +34,8 @@ def refresh(paths, wait=False):
 
     def run():
         for path in unique:
-            _get(base, host, secret, path)
+            for scheme in ("https", "http"):   # the cache keeps one copy per forwarded scheme
+                _get(base, host, secret, path, scheme)
 
     # Not a daemon: a management command that saves a post still sends its refresh before exiting.
     thread = threading.Thread(target=run, name="turbo-refresh")

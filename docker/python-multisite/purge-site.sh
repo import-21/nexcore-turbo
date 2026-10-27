@@ -9,5 +9,5 @@ case "$name" in ""|*[!a-z0-9-]*|-*) echo "usage: purge-site.sh <name>" >&2; exit
 # The cache key starts with scheme + method + host (turbo-http.conf), so a site's files are
 # the ones whose KEY line names <name>.<domain>.
 n=$(docker compose -f "$here/compose.yml" exec -T nginx sh -c \
-    "grep -rlaE '^KEY: https?(GET|HEAD)$name\\.' /var/cache/nginx/turbo-proxy 2>/dev/null | tee /tmp/purge.$$ | wc -l; xargs -r rm -f < /tmp/purge.$$; rm -f /tmp/purge.$$")
+    "grep -rlaE '^KEY: https?(https?)?(GET|HEAD)$name\\.' /var/cache/nginx/turbo-proxy 2>/dev/null | tee /tmp/purge.$$ | wc -l; xargs -r rm -f < /tmp/purge.$$; rm -f /tmp/purge.$$")
 echo "site $name: $n cached page(s) dropped"
