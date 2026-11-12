@@ -59,13 +59,20 @@ import time
 
 SITES = os.environ.get("TURBO_SITES", "/srv/sites")
 SOCKETS = os.environ.get("TURBO_SOCKETS", "/run/turbo")
-IDLE = float(os.environ.get("TURBO_IDLE", "60"))
+# TURBO_PROFILE picks the defaults below; any TURBO_* set explicitly still wins.
+#   responsive: sites stay up a minute after a request, 2 workers (forms don't queue)
+#   dense:      many rarely visited sites on little memory: stop after 15 s, 1 worker
+PROFILES = {"responsive": {"idle": "60", "workers": "2"}, "dense": {"idle": "15", "workers": "1"}}
+PROFILE = os.environ.get("TURBO_PROFILE", "responsive").strip().lower()
+if PROFILE not in PROFILES:
+    raise SystemExit("TURBO_PROFILE must be one of: %s" % ", ".join(PROFILES))
+IDLE = float(os.environ.get("TURBO_IDLE") or PROFILES[PROFILE]["idle"])
 MAX_ACTIVE_SPEC = os.environ.get("TURBO_MAX_ACTIVE", "auto").strip().lower()   # a number, or auto: fit TURBO_MEMORY_BUDGET
 MEMORY_BUDGET = os.environ.get("TURBO_MEMORY_BUDGET", "")   # sites + server; default: container limit, else 90% of RAM
 AUTO_START = 16                                             # auto: slots before enough running sites were measured
 MIN_UID = int(os.environ.get("TURBO_MIN_UID", "1000"))
 SOCKET_GID = int(os.environ.get("TURBO_SOCKET_GID", "-1"))
-SITE_WORKERS = int(os.environ.get("TURBO_SITE_WORKERS", "2"))   # pages nginx can't cache (forms set a CSRF cookie) must not queue behind one request
+SITE_WORKERS = int(os.environ.get("TURBO_SITE_WORKERS") or PROFILES[PROFILE]["workers"])   # pages nginx can't cache (forms set a CSRF cookie) must not queue behind one request
 # Sync workers by default: they accept one connection at a time, so stopping an
 # idle site never drops a connection that was already taken off the queue
 # (a gthread worker accepts ahead and would reset those).
@@ -497,7 +504,7 @@ def serve_site(name, fd, shared):
             busy.value = max(0, busy.value - 1)
         touch()
 
-    workers = max(1, min(int(os.environ.get("TURBO_SITE_WORKERS", SITE_WORKERS)), MAX_WORKERS))
+    workers = max(1, min(int(os.environ.get("TURBO_SITE_WORKERS") or SITE_WORKERS), MAX_WORKERS))
     threads = max(1, min(int(os.environ.get("TURBO_SITE_THREADS", SITE_THREADS)), 16))
     options = {
         "workers": workers,

@@ -95,10 +95,11 @@ sh remove-site.sh shop
 
 | 環境変数 | 初期値 | 説明 |
 |---|---|---|
-| `TURBO_IDLE` | `60` | この秒数アクセスがなければサイトを止める |
+| `TURBO_PROFILE` | `responsive` | 下の2つの初期値の組。`responsive`（停止まで60秒・ワーカー2）か `dense`（15秒・ワーカー1。めったに見られないサイトを少ないメモリに多く載せる）。個別に指定した値が優先 |
+| `TURBO_IDLE` | プロファイルによる（`60`） | この秒数アクセスがなければサイトを止める |
 | `TURBO_MAX_ACTIVE` | `auto` | 同時に動かすサイト数。`auto` は `TURBO_MEMORY_BUDGET` に収まる数を、動いているサイトの実際の使用量から決める。数字で固定もできる |
 | `TURBO_MEMORY_BUDGET` | コンテナのメモリ上限（なければメモリの90%） | サイトとサイトサーバーが使ってよいメモリ（例 `1700M`。nginx の分は空けておく） |
-| `TURBO_SITE_WORKERS` | `2` | サイトごとの gunicorn ワーカー数（上限 `TURBO_SITE_MAX_WORKERS`=4）。キャッシュできないページ（フォームなど）で後ろの訪問者が待たされないように |
+| `TURBO_SITE_WORKERS` | プロファイルによる（`2`） | サイトごとの gunicorn ワーカー数（上限 `TURBO_SITE_MAX_WORKERS`=4）。キャッシュできないページ（フォームなど）で後ろの訪問者が待たされないように |
 | `TURBO_SITE_THREADS` | `1` | ワーカーごとのスレッド数（2以上で gthread。受け付けた要求がスレッドの空き待ちになるため、初期値は1） |
 | `TURBO_SITE_TIMEOUT` | `30` | 1リクエストの制限時間。処理中のサイトは止めないが、この時間＋15秒を過ぎた処理中の数は取り残しとみなす |
 | `TURBO_PRELOAD` | `django,gunicorn,markdown,PIL,pygments` | 最初に1回だけ読み込んで全サイトで共有するパッケージ（入っていないものは飛ばす） |

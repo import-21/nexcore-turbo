@@ -41,10 +41,11 @@ services:
         GUNICORN: ${GUNICORN:-gunicorn==23.*}
     image: nexcore-turbo-python:${TURBO_IMAGE_TAG:-3.12-slim}
     environment:
-      TURBO_IDLE: ${TURBO_IDLE:-60}              # seconds without requests before a site stops
+      TURBO_PROFILE: ${TURBO_PROFILE:-responsive}   # responsive (idle 60 s, 2 workers) or dense (15 s, 1 worker)
+      TURBO_IDLE: ${TURBO_IDLE:-}                # seconds without requests before a site stops (empty: from the profile)
       TURBO_MAX_ACTIVE: ${TURBO_MAX_ACTIVE:-auto}  # sites running at once; auto = as many as TURBO_MEMORY_BUDGET holds
       TURBO_MEMORY_BUDGET: ${TURBO_MEMORY_BUDGET:-}   # e.g. 1700M (leave room for nginx); empty = container limit / 90% of RAM
-      TURBO_SITE_WORKERS: ${TURBO_SITE_WORKERS:-2}
+      TURBO_SITE_WORKERS: ${TURBO_SITE_WORKERS:-}   # empty: from the profile
       TURBO_SITE_THREADS: ${TURBO_SITE_THREADS:-1}
       TURBO_SOCKET_GID: "101"                    # nginx's group in nginx:alpine; sites can't connect to each other
       TURBO_LOCK_TMP: "1"                        # shared /tmp: sites can't list each other's files
